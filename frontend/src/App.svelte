@@ -18,7 +18,7 @@
   import SettingsPage from './lib/components/SettingsPage.svelte';
   import { setupEventListeners, teardownEventListeners } from './lib/tauri/events';
   import { appState, isRecording } from './lib/stores/appState.svelte';
-  import { getConfig } from './lib/tauri/commands';
+  import { getConfig, startRecording, stopRecording, cancelRecording } from './lib/tauri/commands';
 
   // ─── Navigation state ────────────────────────────────────────────────────
 
@@ -41,23 +41,120 @@
 
   $effect(() => { applyTheme(appState.theme); });
 
+  // ─── Hotkey helpers ──────────────────────────────────────────────────────
+
+  /**
+   * Returns true if the KeyboardEvent matches a stored combo string.
+   * Combo format: "Modifier+Key" e.g. "Alt+Space", "Ctrl+Shift+V", "Escape".
+   * Comparison is case-insensitive.
+   */
+  function matchesHotkey(e: KeyboardEvent, combo: string): boolean {
+    if (!combo) return false;
+    const parts = combo.split('+');
+    const keyPart = parts[parts.length - 1];
+    const wantsCtrl  = parts.includes('Ctrl');
+    const wantsAlt   = parts.includes('Alt');
+    const wantsShift = parts.includes('Shift');
+    const wantsMeta  = parts.includes('Meta') || parts.includes('Win');
+    if (e.ctrlKey  !== wantsCtrl)  return false;
+    if (e.altKey   !== wantsAlt)   return false;
+    if (e.shiftKey !== wantsShift) return false;
+    if (e.metaKey  !== wantsMeta)  return false;
+    const evKey = e.key === ' ' ? 'Space' : e.key;
+    return evKey.toLowerCase() === keyPart.toLowerCase();
+  }
+
   // ─── Lifecycle ───────────────────────────────────────────────────────────
 
   onMount(() => {
+    // Track push-to-talk state
+    let pttHeld = false;
+    let pttPhysicalKey = '';
+
+    function handleKeyDown(e: KeyboardEvent): void {
+      // Skip if focus is inside an interactive input element
+      const tgt = e.target as HTMLElement;
+      if (
+        tgt instanceof HTMLInputElement ||
+        tgt instanceof HTMLTextAreaElement ||
+        tgt instanceof HTMLSelectElement ||
+        tgt.isContentEditable
+      ) return;
+
+      const hk = appState.hotkeyConfig;
+
+      // Cancel (highest priority)
+      if (
+        matchesHotkey(e, hk.cancel) &&
+        (appState.status === 'recording' || appState.status === 'processing')
+      ) {
+        e.preventDefault();
+        pttHeld = false;
+        pttPhysicalKey = '';
+        cancelRecording().catch(() => {});
+        return;
+      }
+
+      // Push-to-talk keydown
+      if (matchesHotkey(e, hk.push_to_talk) && !pttHeld) {
+        if (appState.status === 'idle') {
+          e.preventDefault();
+          pttHeld = true;
+          pttPhysicalKey = e.key === ' ' ? 'Space' : e.key;
+          startRecording('push_to_talk').catch(() => {});
+        }
+        return;
+      }
+
+      // Free-speech toggle
+      if (matchesHotkey(e, hk.free_speech)) {
+        e.preventDefault();
+        if (appState.status === 'idle') {
+          startRecording('free_speech').catch(() => {});
+        } else if (appState.status === 'recording') {
+          stopRecording().catch(() => {});
+        }
+      }
+    }
+
+    function handleKeyUp(e: KeyboardEvent): void {
+      if (!pttHeld) return;
+      const relKey = e.key === ' ' ? 'Space' : e.key;
+      if (relKey.toLowerCase() === pttPhysicalKey.toLowerCase()) {
+        pttHeld = false;
+        pttPhysicalKey = '';
+        if (appState.status === 'recording') {
+          stopRecording().catch(() => {});
+        }
+      }
+    }
+
     (async () => {
       await setupEventListeners();
 
-      // Load and apply persisted theme
+      // Load persisted config (theme + hotkeys)
       try {
         const cfg = await getConfig();
         appState.theme = (cfg.ui?.theme ?? 'dark') as 'dark' | 'light' | 'system';
+        appState.hotkeyConfig = {
+          push_to_talk: (cfg.hotkey as any)?.push_to_talk ?? 'Alt+Space',
+          free_speech:  (cfg.hotkey as any)?.free_speech  ?? 'Ctrl+Shift+V',
+          cancel:       (cfg.hotkey as any)?.cancel       ?? 'Escape',
+        };
       } catch {
         appState.theme = 'dark';
       }
       applyTheme(appState.theme);
+
+      document.addEventListener('keydown', handleKeyDown);
+      document.addEventListener('keyup', handleKeyUp);
     })();
 
-    return () => { teardownEventListeners(); };
+    return () => {
+      teardownEventListeners();
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('keyup', handleKeyUp);
+    };
   });
 
   // ─── Status label ────────────────────────────────────────────────────────

@@ -57,6 +57,13 @@ export const appState = $state({
 
   /** Active UI theme — persisted in config.json via set_config. */
   theme: 'dark' as 'dark' | 'light' | 'system',
+
+  /** Hotkey combo strings loaded from config. Updated when settings are saved. */
+  hotkeyConfig: {
+    push_to_talk: 'Alt+Space',
+    free_speech: 'Ctrl+Shift+V',
+    cancel: 'Escape',
+  },
 });
 
 // ─── Derived Values (exported as functions — Svelte 5 module rule) ───────────

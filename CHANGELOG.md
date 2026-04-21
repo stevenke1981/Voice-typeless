@@ -6,6 +6,38 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.2.1] - 2026-04-22
+
+### Fixed
+
+- **Hotkeys now work**: Added global `document.keydown` / `keyup` listeners in `App.svelte`
+  that parse the stored hotkey combo strings (e.g. `"Alt+Space"`) and call
+  `startRecording` / `stopRecording` / `cancelRecording` accordingly.
+  Previously, hotkeys were captured in Settings and saved to config, but nothing
+  ever read them back to intercept keypresses.
+- **Push-to-talk mode**: Holding the PTT key starts recording; releasing it stops.
+  Tracks the physical key so modifier-release before key-release works correctly.
+- **Free-speech toggle**: One press starts, a second press stops.
+- **Cancel hotkey**: Works while recording or processing; resets status to idle.
+- **Hotkeys update live**: After saving Settings, `appState.hotkeyConfig` is updated
+  so the new combos take effect immediately without restarting the app.
+- **Recording commands emit events**: `start_recording`, `stop_recording`, and
+  `cancel_recording` Rust commands now emit `recording-started`, `recording-stopped`,
+  and `recording-cancelled` Tauri events so the UI status indicator updates correctly.
+  `stop_recording` also spawns a 600 ms delayed `recognition-result` event so the UI
+  returns to idle automatically.
+- **Chinese UI language switch now works**: Created `frontend/src/lib/i18n.svelte.ts`
+  — a Svelte 5 module-level `$state`-backed reactive i18n system with full English and
+  Traditional Chinese translations. Switching to Chinese in Settings → Display language
+  now instantly updates all section headings, labels, buttons, and status text.
+- **Svelte 5 reactive i18n**: All components read translations via `t('key')`, which
+  re-evaluates automatically when `lang` state changes — no page reload needed.
+
+### Added
+
+- `frontend/src/lib/i18n.svelte.ts` — reactive i18n module with 50+ translation keys
+  in English and Traditional Chinese.
+
 ## [0.2.0] - 2026-04-21
 
 ### Added

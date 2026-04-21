@@ -18,6 +18,7 @@
     exportHistoryText, getStats, runDemo,
     type HistoryItem, type Stats,
   } from '../tauri/commands';
+  import { t } from '../i18n.svelte';
 
   // ─── State ─────────────────────────────────────────────────────────────────
 
@@ -175,7 +176,7 @@
   <!-- ── Header ─────────────────────────────────────────────────────────── -->
   <div class="panel-header">
     <div class="header-left">
-      <h2 class="section-title">History</h2>
+      <h2 class="section-title">{t('history.title')}</h2>
       {#if stats && stats.total_items > 0}
         <span class="stats-badge" aria-label="Statistics">
           {stats.total_items} · {stats.total_chars}c{topLanguage ? ` · ${topLanguage}` : ''}
@@ -208,7 +209,7 @@
 
       <!-- Clear All with inline confirmation -->
       {#if pendingClearAll}
-        <span class="confirm-label" aria-live="assertive">Clear all?</span>
+        <span class="confirm-label" aria-live="assertive">{t('history.clearConfirm')}</span>
         <button class="header-btn confirm-yes" onclick={confirmClearAll} aria-label="Confirm clear all">✓</button>
         <button class="header-btn confirm-no" onclick={cancelClearAll} aria-label="Cancel clear all">✕</button>
       {:else}
@@ -243,7 +244,7 @@
       <input
         type="search"
         class="search-input"
-        placeholder="Search history…"
+        placeholder={t('history.search.placeholder')}
         bind:value={searchText}
         aria-label="Search history"
       />
@@ -253,7 +254,7 @@
     </div>
     {#if searchText.trim()}
       <span class="search-count" aria-live="polite">
-        {filteredItems.length} result{filteredItems.length !== 1 ? 's' : ''}
+        {filteredItems.length} {filteredItems.length !== 1 ? t('history.results.plural') : t('history.results.singular')}
       </span>
     {/if}
   </div>
@@ -272,11 +273,11 @@
     <div class="empty-state" role="status" aria-live="polite">
       <div class="empty-icon" aria-hidden="true">🎤</div>
       {#if searchText.trim()}
-        <p class="empty-title">No results for "{searchText}"</p>
-        <p class="empty-sub">Try a different search term.</p>
+        <p class="empty-title">{t('history.noResults.title')} "{searchText}"</p>
+        <p class="empty-sub">{t('history.noResults.subtitle')}</p>
       {:else}
-        <p class="empty-title">No history yet</p>
-        <p class="empty-sub">Press your hotkey and start speaking, or click ▶ for a demo.</p>
+        <p class="empty-title">{t('history.empty.title')}</p>
+        <p class="empty-sub">{t('history.empty.subtitle')}</p>
       {/if}
     </div>
 

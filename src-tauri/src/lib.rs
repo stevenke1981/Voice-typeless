@@ -135,23 +135,37 @@ const DEMO_TEXTS: &[&str] = &[
 // ── Commands ──────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-fn start_recording(mode: String) -> Result<(), String> {
+fn start_recording(app: tauri::AppHandle, mode: String) -> Result<(), String> {
     println!("start_recording: mode={mode}");
+    app.emit("recording-started", serde_json::json!({"timestamp": 0}))
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
 #[tauri::command]
-fn stop_recording() -> Result<serde_json::Value, String> {
+async fn stop_recording(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    app.emit("recording-stopped", serde_json::json!({"duration_ms": 500}))
+        .map_err(|e| e.to_string())?;
+    // Emit recognition-result after a short delay so status returns to idle
+    // (In real implementation, this would come from the ASR engine)
+    let app2 = app.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+        let _ = app2.emit("recognition-result", serde_json::json!({
+            "text": "",
+            "language": "en",
+            "confidence": 0.0
+        }));
+    });
     Ok(serde_json::json!({
-        "text": "",
-        "language": "en",
-        "confidence": 0.0,
-        "duration_ms": 0
+        "text": "", "language": "en", "confidence": 0.0, "duration_ms": 500
     }))
 }
 
 #[tauri::command]
-fn cancel_recording() -> Result<(), String> {
+fn cancel_recording(app: tauri::AppHandle) -> Result<(), String> {
+    app.emit("recording-cancelled", serde_json::json!(null))
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 

@@ -25,6 +25,7 @@
   import { getConfig, setConfig, getAutostartEnabled, setAutostartEnabled, type AppConfig } from '../tauri/commands';
   import { appState } from '../stores/appState.svelte';
   import DevicePicker from './DevicePicker.svelte';
+  import { t, setLang } from '../i18n.svelte';
 
   // ─── Extended config type ─────────────────────────────────────────────────
   //
@@ -160,6 +161,9 @@
     }
   });
 
+  // Sync language selector → i18n module
+  $effect(() => { setLang(config.ui.language as 'en' | 'zh'); });
+
   // ─── Save ──────────────────────────────────────────────────────────────────
 
   async function save(): Promise<void> {
@@ -169,6 +173,8 @@
     try {
       // Cast to Partial<AppConfig> — the Rust handler accepts arbitrary JSON.
       await setConfig(config as unknown as Partial<AppConfig>);
+      // @ts-ignore — hotkeyConfig is added by the parallel agent
+      appState.hotkeyConfig = { ...config.hotkey };
       saveSuccess = true;
       setTimeout(() => { saveSuccess = false; }, 2500);
     } catch (err) {
@@ -231,9 +237,9 @@
   // ─── Helpers ───────────────────────────────────────────────────────────────
 
   const HOTKEY_LABELS: Record<keyof LocalConfig['hotkey'], string> = {
-    push_to_talk: 'Push-to-Talk',
-    free_speech:  'Free Speech (toggle)',
-    cancel:       'Cancel / Dismiss',
+    push_to_talk: 'settings.hotkeys.pushToTalk',
+    free_speech:  'settings.hotkeys.freeSpeech',
+    cancel:       'settings.hotkeys.cancel',
   };
 
   const THEME_OPTIONS: Array<{ value: LocalConfig['ui']['theme']; label: string }> = [
@@ -290,9 +296,9 @@
     <!-- ── Section: Hotkeys ──────────────────────────────────────────────── -->
     <section class="settings-section" aria-labelledby="hotkey-heading">
       <h3 id="hotkey-heading" class="section-heading">
-        <span aria-hidden="true">⌨</span> Hotkeys
+        <span aria-hidden="true">⌨</span> {t('settings.section.hotkeys')}
       </h3>
-      <p class="section-desc">Click a field then press your desired key combination.</p>
+      <p class="section-desc">{t('settings.hotkeys.desc')}</p>
 
       <div class="field-group">
         {#each Object.keys(HOTKEY_LABELS) as field (field)}
@@ -303,7 +309,7 @@
               for="hotkey-{field}"
               class="field-label"
             >
-              {HOTKEY_LABELS[key]}
+              {t(HOTKEY_LABELS[key])}
             </label>
             <button
               id="hotkey-{field}"
@@ -312,7 +318,7 @@
               onclick={() => startCapture(key)}
               onkeydown={(e) => onHotkeyKeydown(key, e)}
               onblur={onHotkeyBlur}
-              aria-label="{HOTKEY_LABELS[key]} hotkey: {config.hotkey[key]}. Click to change."
+              aria-label="{t(HOTKEY_LABELS[key])} hotkey: {config.hotkey[key]}. Click to change."
               aria-pressed={isCapturing}
               title={isCapturing ? 'Press a key combination…' : 'Click to record hotkey'}
               type="button"
@@ -331,7 +337,7 @@
     <!-- ── Section: Audio ────────────────────────────────────────────────── -->
     <section class="settings-section" aria-labelledby="audio-heading">
       <h3 id="audio-heading" class="section-heading">
-        <span aria-hidden="true">🎙</span> Audio
+        <span aria-hidden="true">🎙</span> {t('settings.section.audio')}
       </h3>
 
       <!-- Embedded device picker -->
@@ -340,8 +346,8 @@
       <!-- Notification sounds toggle -->
       <div class="field-row toggle-row">
         <label for="enable-sounds" class="field-label">
-          Notification sounds
-          <span class="field-hint">Marimba-style start/stop tones</span>
+          {t('settings.audio.sounds')}
+          <span class="field-hint">{t('settings.audio.soundsHint')}</span>
         </label>
         <button
           id="enable-sounds"
@@ -360,7 +366,7 @@
       {#if config.audio.enable_sounds}
         <div class="field-row">
           <label for="sound-volume" class="field-label">
-            Sound volume
+            {t('settings.audio.volume')}
             <span class="field-hint">{Math.round(config.audio.sound_volume * 100)}%</span>
           </label>
           <input
@@ -383,11 +389,11 @@
     <!-- ── Section: Model ────────────────────────────────────────────────── -->
     <section class="settings-section" aria-labelledby="model-heading">
       <h3 id="model-heading" class="section-heading">
-        <span aria-hidden="true">🧠</span> Speech Model
+        <span aria-hidden="true">🧠</span> {t('settings.section.model')}
       </h3>
 
       <div class="field-row">
-        <label for="active-model" class="field-label">Active model</label>
+        <label for="active-model" class="field-label">{t('settings.model.active')}</label>
         <select
           id="active-model"
           class="select-input"
@@ -402,8 +408,8 @@
 
       <div class="field-row">
         <label for="inference-device" class="field-label">
-          Inference device
-          <span class="field-hint">DirectML recommended on Windows</span>
+          {t('settings.model.device')}
+          <span class="field-hint">{t('settings.model.deviceHint')}</span>
         </label>
         <select
           id="inference-device"
@@ -421,14 +427,14 @@
     <!-- ── Section: Text Processing ─────────────────────────────────────── -->
     <section class="settings-section" aria-labelledby="text-heading">
       <h3 id="text-heading" class="section-heading">
-        <span aria-hidden="true">✍</span> Text Processing
+        <span aria-hidden="true">✍</span> {t('settings.section.text')}
       </h3>
 
       <!-- Filler word filter -->
       <div class="field-row toggle-row">
         <label for="filter-filler" class="field-label">
-          Filter filler words
-          <span class="field-hint">Remove "um", "uh", "那個", "えーと"…</span>
+          {t('settings.text.filterFiller')}
+          <span class="field-hint">{t('settings.text.filterFillerHint')}</span>
         </label>
         <button
           id="filter-filler"
@@ -446,8 +452,8 @@
       <!-- Mixed-language optimisation -->
       <div class="field-row toggle-row">
         <label for="lang-mix" class="field-label">
-          Mixed-language optimisation
-          <span class="field-hint">Auto-space CJK/Latin boundaries, capitalise sentences</span>
+          {t('settings.text.mixedLang')}
+          <span class="field-hint">{t('settings.text.mixedLangHint')}</span>
         </label>
         <button
           id="lang-mix"
@@ -465,7 +471,7 @@
       <!-- VAD silence threshold -->
       <div class="field-row">
         <label for="vad-threshold" class="field-label">
-          Auto-stop silence
+          {t('settings.text.vadThreshold')}
           <span class="field-hint">{vadLabel} of silence triggers stop in free-speech mode</span>
         </label>
         <input
@@ -488,26 +494,26 @@
     <!-- ── Section: UI ────────────────────────────────────────────────────── -->
     <section class="settings-section" aria-labelledby="ui-heading">
       <h3 id="ui-heading" class="section-heading">
-        <span aria-hidden="true">🎨</span> Interface
+        <span aria-hidden="true">🎨</span> {t('settings.section.interface')}
       </h3>
 
       <!-- Theme selection -->
       <div class="field-row">
-        <label class="field-label" id="theme-group-label">Theme</label>
+        <label class="field-label" id="theme-group-label">{t('settings.ui.theme')}</label>
         <div
           class="theme-buttons"
           role="group"
           aria-labelledby="theme-group-label"
         >
-          {#each THEME_OPTIONS as t (t.value)}
+          {#each THEME_OPTIONS as themeOpt (themeOpt.value)}
             <button
               class="theme-btn"
-              class:active={config.ui.theme === t.value}
-              onclick={() => (config.ui.theme = t.value)}
-              aria-pressed={config.ui.theme === t.value}
-              aria-label="Theme: {t.label}"
+              class:active={config.ui.theme === themeOpt.value}
+              onclick={() => (config.ui.theme = themeOpt.value)}
+              aria-pressed={config.ui.theme === themeOpt.value}
+              aria-label="Theme: {themeOpt.label}"
             >
-              {t.label}
+              {themeOpt.label}
             </button>
           {/each}
         </div>
@@ -515,7 +521,7 @@
 
       <!-- UI language -->
       <div class="field-row">
-        <label for="ui-language" class="field-label">Display language</label>
+        <label for="ui-language" class="field-label">{t('settings.ui.language')}</label>
         <select
           id="ui-language"
           class="select-input select-narrow"
@@ -531,8 +537,8 @@
       <!-- Floating indicator toggle -->
       <div class="field-row toggle-row">
         <label for="show-indicator" class="field-label">
-          Floating indicator
-          <span class="field-hint">Draggable overlay shown while recording</span>
+          {t('settings.ui.indicator')}
+          <span class="field-hint">{t('settings.ui.indicatorHint')}</span>
         </label>
         <button
           id="show-indicator"
@@ -550,7 +556,7 @@
       <!-- History retention slider -->
       <div class="field-row">
         <label for="history-retention" class="field-label">
-          History retention
+          {t('settings.ui.retention')}
           <span class="field-hint">{retentionLabel}</span>
         </label>
         <input
@@ -572,7 +578,7 @@
       <!-- Max history items -->
       <div class="field-row">
         <label for="max-history" class="field-label">
-          Max history entries
+          {t('settings.ui.maxHistory')}
           <span class="field-hint">{config.ui.max_history_items} items</span>
         </label>
         <input
@@ -594,13 +600,13 @@
     <!-- ── Section: System ────────────────────────────────────────────────── -->
     <section class="settings-section" aria-labelledby="system-heading">
       <h3 id="system-heading" class="section-heading">
-        <span aria-hidden="true">⚙</span> System
+        <span aria-hidden="true">⚙</span> {t('settings.section.system')}
       </h3>
 
       <div class="field-row toggle-row">
         <label for="auto-start" class="field-label">
-          Launch at login
-          <span class="field-hint">Start Voice-typeless when you log in</span>
+          {t('settings.system.autoStart')}
+          <span class="field-hint">{t('settings.system.autoStartHint')}</span>
         </label>
         <button
           id="auto-start"
@@ -621,8 +627,8 @@
 
       <div class="field-row toggle-row">
         <label for="minimize-tray" class="field-label">
-          Minimize to tray
-          <span class="field-hint">Keep running in system tray when window is closed</span>
+          {t('settings.system.tray')}
+          <span class="field-hint">{t('settings.system.trayHint')}</span>
         </label>
         <button
           id="minimize-tray"
@@ -639,8 +645,8 @@
 
       <div class="field-row toggle-row">
         <label for="check-updates" class="field-label">
-          Check for updates
-          <span class="field-hint">Auto-check GitHub releases on startup</span>
+          {t('settings.system.updates')}
+          <span class="field-hint">{t('settings.system.updatesHint')}</span>
         </label>
         <button
           id="check-updates"
@@ -665,7 +671,7 @@
       {/if}
       {#if saveSuccess}
         <p class="footer-success" role="status" aria-live="polite">
-          <span aria-hidden="true">✓</span> Settings saved successfully.
+          <span aria-hidden="true">✓</span> {t('settings.saved')}
         </p>
       {/if}
 
@@ -675,16 +681,16 @@
           onclick={resetDefaults}
           aria-label="Reset all settings to defaults"
         >
-          Reset defaults
+          {t('settings.reset')}
         </button>
         <button
           class="btn-primary"
           onclick={save}
           disabled={isSaving}
-          aria-label={isSaving ? 'Saving settings…' : 'Save settings'}
+          aria-label={isSaving ? t('settings.saving') : t('settings.save')}
           aria-busy={isSaving}
         >
-          {isSaving ? 'Saving…' : 'Save settings'}
+          {isSaving ? t('settings.saving') : t('settings.save')}
         </button>
       </div>
     </footer>
