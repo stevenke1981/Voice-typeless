@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+:root {
+  --vtl-teal: #00e6c8;
+  --vtl-indigo: #5b4eff;
+  --vtl-green: #22ffaa;
+  --vtl-bg-dark: #0f0f12;
+  --vtl-bg-dark-2: #1f1f25;
+  --vtl-text-dark: #e5e5e8;
+  --vtl-gray: #a0a0a8;
+  --vtl-border: #4a4a52;
+}
+
+/* Light theme variable overrides — applied via html.theme-light */
+html.theme-light {
+  --vtl-bg-dark: #F7F7FB;
+  --vtl-bg-dark-2: #EFEFF5;
+  --vtl-text-dark: #1A1A1F;
+  --vtl-border: #DDDDE5;
+  --vtl-gray: #6A6A72;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: "Inter", system-ui, sans-serif;
+  background-color: var(--vtl-bg-dark);
+  color: var(--vtl-text-dark);
+  user-select: none;
+  -webkit-user-select: none;
+}

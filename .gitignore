@@ -1,0 +1,39 @@
+# Go
+/core/vendor/
+*.test
+/core/coverage.out
+
+# Rust / Tauri
+/src-tauri/target/
+/src-tauri/WixTools/
+
+# Node / Frontend
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.svelte-kit/
+/frontend/build/
+
+# Models (large binary files - download separately)
+/models/*.onnx
+/models/*.bin
+/models/*.pt
+/models/!.gitkeep
+
+# Build output
+/build/dist/
+*.msi
+*.dmg
+*.AppImage
+*.deb
+*.exe
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
