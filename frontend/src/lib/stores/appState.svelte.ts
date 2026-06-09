@@ -40,6 +40,9 @@ export const appState = $state({
   /** Active microphone device ID ('default' = OS default). */
   activeDevice: 'default',
 
+  /** Available model list (populated by ModelSwitcher on mount). */
+  modelList: [] as Array<{ id: string; name: string; type: string; is_downloaded: boolean; device: string | null }>,
+
   /** Currently loaded speech model identifier. */
   activeModel: 'sensevoice-small' as ModelId,
 

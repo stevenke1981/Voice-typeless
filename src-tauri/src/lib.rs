@@ -63,6 +63,56 @@ impl Default for AppConfig {
     }
 }
 
+// ── Model info ─────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct ModelInfo {
+    id: String,
+    name: String,
+    #[serde(rename = "type")]
+    model_type: String,
+    size_bytes: u64,
+    languages: Vec<String>,
+    is_active: bool,
+    is_downloaded: bool,
+    device: Option<String>,
+}
+
+fn available_models(active_id: &str) -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "sensevoice-small".into(),
+            name: "SenseVoice Small".into(),
+            model_type: "sensevoice".into(),
+            size_bytes: 38_000_000,
+            languages: vec!["zh".into(), "en".into(), "ja".into(), "ko".into()],
+            is_active: active_id == "sensevoice-small",
+            is_downloaded: true,
+            device: Some("directml".into()),
+        },
+        ModelInfo {
+            id: "whisper-tiny".into(),
+            name: "Whisper Tiny".into(),
+            model_type: "whisper-tiny".into(),
+            size_bytes: 75_000_000,
+            languages: vec!["en".into(), "zh".into()],
+            is_active: active_id == "whisper-tiny",
+            is_downloaded: true,
+            device: Some("cpu".into()),
+        },
+        ModelInfo {
+            id: "custom-onnx".into(),
+            name: "Custom ONNX".into(),
+            model_type: "custom-onnx".into(),
+            size_bytes: 0,
+            languages: vec![],
+            is_active: active_id == "custom-onnx",
+            is_downloaded: false,
+            device: None,
+        },
+    ]
+}
+
 // ── History ────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -176,6 +226,22 @@ fn get_devices() -> Result<Vec<serde_json::Value>, String> {
         serde_json::json!({"id": "realtek", "name": "Realtek Audio"}),
         serde_json::json!({"id": "usb",     "name": "USB Microphone"}),
     ])
+}
+
+#[tauri::command]
+fn get_model_list(state: State<'_, Mutex<AppState>>) -> Result<Vec<ModelInfo>, String> {
+    let s = state.lock().map_err(|e| e.to_string())?;
+    Ok(available_models(&s.config.model.active_model_id))
+}
+
+#[tauri::command]
+fn set_active_model(
+    state: State<'_, Mutex<AppState>>,
+    model_id: String,
+) -> Result<(), String> {
+    let mut s = state.lock().map_err(|e| e.to_string())?;
+    s.config.model.active_model_id = model_id;
+    save_config(&s.config_path, &s.config)
 }
 
 #[tauri::command]
@@ -462,6 +528,8 @@ pub fn run() {
             stop_recording,
             cancel_recording,
             get_devices,
+            get_model_list,
+            set_active_model,
             get_history,
             delete_history_item,
             clear_history,

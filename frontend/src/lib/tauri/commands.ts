@@ -96,3 +96,22 @@ export const getAutostartEnabled = () =>
 
 export const setAutostartEnabled = (enable: boolean) =>
   invoke<void>("set_autostart_enabled", { enable });
+
+// ─── Model commands (architecture §6.1) ──────────────────────────────────────
+
+export interface ModelInfo {
+  id: string;
+  name: string;
+  type: "sensevoice" | "whisper-tiny" | "custom-onnx";
+  size_bytes: number;
+  languages: string[];
+  is_active: boolean;
+  is_downloaded: boolean;
+  device: "directml" | "cuda" | "cpu" | null;
+}
+
+export const getModelList = () =>
+  invoke<ModelInfo[]>("get_model_list");
+
+export const setActiveModel = (modelId: string) =>
+  invoke<void>("set_active_model", { modelId });
