@@ -208,6 +208,12 @@ pub struct Recorder {
     started_at: Mutex<Option<SystemTime>>,
 }
 
+// SAFETY: cpal::Stream is !Send on Windows WASAPI due to PhantomData<*mut ()>,
+// but we always access it behind a Mutex and never from audio-callback threads.
+// This is the standard pattern used throughout the cpal ecosystem.
+unsafe impl Send for Recorder {}
+unsafe impl Sync for Recorder {}
+
 impl Recorder {
     /// Create a new `Recorder` in the stopped state.
     pub fn new() -> Self {
@@ -382,6 +388,10 @@ pub struct Player {
     enabled: AtomicBool,
     volume: Mutex<f64>,
 }
+
+// SAFETY: Same rationale as Recorder — cpal::Stream behind a Mutex.
+unsafe impl Send for Player {}
+unsafe impl Sync for Player {}
 
 impl Player {
     /// Create a new `Player` with default settings (enabled, volume 1.0).

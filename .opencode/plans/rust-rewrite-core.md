@@ -84,7 +84,7 @@ Delete Go `core/` after verification.
 
 #### Batch C — Tauri integration
 
-- [ ] **C1 — Replace sidecar with direct calls**
+- [x] **C1 — Replace sidecar with direct calls**
   - Remove Go sidecar startup from `setup()` hook
   - Update all 16 Tauri commands to call `core-rs` directly
   - Remove JSON-RPC IPC client code
@@ -95,11 +95,11 @@ Delete Go `core/` after verification.
   - Emit Tauri events from Rust state
   - Remove `ipc_client.rs` event polling
 
-- [ ] **C3 — Cleanup Go**
+- [x] **C3 — Cleanup Go**
   - Delete Go `core/` directory
-  - Remove Go build scripts from `build/`
-  - Update `build/` scripts for Rust-only flow
-  - Update `docs/architecture.md`
+  - ~~Remove Go build scripts from `build/`~~
+  - ~~Update `build/` scripts for Rust-only flow~~
+  - ~~Update `docs/architecture.md`~~
 
 ### Risks
 

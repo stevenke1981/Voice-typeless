@@ -2,6 +2,7 @@ use std::sync::Mutex;
 use std::path::PathBuf;
 use tauri::{Emitter, Manager, State};
 
+use vtl_core::audio::{AudioError, AudioPlayer, AudioRecorder, AudioChunk, DeviceEnumerator, Enumerator, Player, Recorder, RecorderConfig};
 use vtl_core::config::AppConfig;
 use vtl_core::history::HistoryItem;
 
@@ -120,6 +121,8 @@ struct AppState {
     config: AppConfig,
     history: Vec<HistoryItem>,
     history_path: PathBuf,
+    recorder: Recorder,
+    player: Player,
 }
 
 // ── I/O helpers ────────────────────────────────────────────────────────────────
@@ -136,48 +139,94 @@ fn save_history(path: &PathBuf, items: &[HistoryItem]) -> Result<(), String> {
     std::fs::write(path, json).map_err(|e| e.to_string())
 }
 
-// ── Demo texts ─────────────────────────────────────────────────────────────────
-
-const DEMO_TEXTS: &[&str] = &[
-    "Hello! Voice-typeless is working. Say anything and it will be transcribed instantly.",
-    "This is a demonstration of the voice-to-text feature. Try pressing the hotkey to start.",
-    "Voice-typeless supports multiple languages including English, Chinese, Japanese, and more.",
-    "You can use push-to-talk mode by holding your hotkey, or free speech mode to speak naturally.",
-    "All your voice recordings are processed locally — no data leaves your computer.",
-];
-
 // ── Commands ──────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-fn start_recording(app: tauri::AppHandle, mode: String) -> Result<(), String> {
+fn start_recording(
+    app: tauri::AppHandle,
+    state: State<'_, Mutex<AppState>>,
+    mode: String,
+) -> Result<(), String> {
     println!("start_recording: mode={mode}");
-    app.emit("recording-started", serde_json::json!({"timestamp": 0}))
+    let s = state.lock().map_err(|e| e.to_string())?;
+    let cfg = RecorderConfig {
+        device_id: s.config.audio.device_id.clone(),
+        sample_rate: s.config.audio.sample_rate,
+        channels: s.config.audio.channels as u32,
+        buffer_size: 0,
+    };
+    // Ignore AlreadyRecording — treat as a no-op restart
+    match s.recorder.start(cfg) {
+        Err(AudioError::AlreadyRecording) => {}
+        Err(e) => return Err(e.to_string()),
+        Ok(_) => {}
+    }
+    // Play start tone (no-op if sounds disabled via set_enabled)
+    let _ = s.player.play_start();
+    drop(s);
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    app.emit("recording-started", serde_json::json!({"timestamp": ts}))
         .map_err(|e| e.to_string())?;
     Ok(())
 }
 
 #[tauri::command]
-async fn stop_recording(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
-    app.emit("recording-stopped", serde_json::json!({"duration_ms": 500}))
+fn stop_recording(
+    app: tauri::AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<serde_json::Value, String> {
+    let s = state.lock().map_err(|e| e.to_string())?;
+    // Gracefully handle "not recording" edge case
+    let chunk = match s.recorder.stop() {
+        Ok(()) => {
+            let _ = s.player.play_stop();
+            s.recorder.drain().unwrap_or(AudioChunk {
+                samples: vec![],
+                sample_rate: 16000,
+                captured_at: std::time::SystemTime::now(),
+            })
+        }
+        Err(AudioError::NotRecording) => {
+            let _ = s.player.play_stop();
+            app.emit("recording-stopped", serde_json::json!({"duration_ms": 0}))
+                .ok();
+            return Ok(serde_json::json!({
+                "text": "", "language": "en", "confidence": 0.0, "duration_ms": 0
+            }));
+        }
+        Err(e) => return Err(e.to_string()),
+    };
+    drop(s);
+    let duration_ms = if chunk.sample_rate > 0 {
+        (chunk.samples.len() as u64 * 1000) / chunk.sample_rate as u64
+    } else {
+        0
+    };
+    app.emit("recording-stopped", serde_json::json!({"duration_ms": duration_ms}))
         .map_err(|e| e.to_string())?;
-    // Emit recognition-result after a short delay so status returns to idle
-    // (In real implementation, this would come from the ASR engine)
-    let app2 = app.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
-        let _ = app2.emit("recognition-result", serde_json::json!({
-            "text": "",
-            "language": "en",
-            "confidence": 0.0
-        }));
-    });
+    // No ASR engine yet — emit empty result for frontend
+    app.emit("recognition-result", serde_json::json!({
+        "text": "",
+        "language": "en",
+        "confidence": 0.0,
+        "duration_ms": duration_ms,
+    })).map_err(|e| e.to_string())?;
     Ok(serde_json::json!({
-        "text": "", "language": "en", "confidence": 0.0, "duration_ms": 500
+        "text": "", "language": "en", "confidence": 0.0, "duration_ms": duration_ms
     }))
 }
 
 #[tauri::command]
-fn cancel_recording(app: tauri::AppHandle) -> Result<(), String> {
+fn cancel_recording(
+    app: tauri::AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let s = state.lock().map_err(|e| e.to_string())?;
+    s.recorder.cancel();
+    drop(s);
     app.emit("recording-cancelled", serde_json::json!(null))
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -185,11 +234,25 @@ fn cancel_recording(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn get_devices() -> Result<Vec<serde_json::Value>, String> {
-    Ok(vec![
-        serde_json::json!({"id": "default", "name": "Default Microphone"}),
-        serde_json::json!({"id": "realtek", "name": "Realtek Audio"}),
-        serde_json::json!({"id": "usb",     "name": "USB Microphone"}),
-    ])
+    let enumerator = Enumerator;
+    let devices = enumerator.list_input_devices().map_err(|e| e.to_string())?;
+    let mut result = vec![serde_json::json!({
+        "id": "default",
+        "name": "Default Microphone",
+        "is_default": true,
+        "channels": 1,
+        "sample_rates": [16000],
+    })];
+    for dev in devices {
+        result.push(serde_json::json!({
+            "id": dev.id,
+            "name": dev.name,
+            "is_default": dev.is_default,
+            "channels": dev.channels,
+            "sample_rates": dev.sample_rates,
+        }));
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -281,55 +344,6 @@ fn set_config(state: State<'_, Mutex<AppState>>, config: serde_json::Value) -> R
 }
 
 #[tauri::command]
-async fn run_demo(
-    app: tauri::AppHandle,
-    state: State<'_, Mutex<AppState>>,
-) -> Result<(), String> {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64;
-
-    app.emit("recording-started", serde_json::json!({"timestamp": ts}))
-        .map_err(|e| e.to_string())?;
-
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-    app.emit("recording-stopped", serde_json::json!({"duration_ms": 2000}))
-        .map_err(|e| e.to_string())?;
-
-    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
-
-    let idx = (ts as usize) % DEMO_TEXTS.len();
-    let text = DEMO_TEXTS[idx].to_string();
-
-    {
-        let mut s = state.lock().map_err(|e| e.to_string())?;
-        let item = HistoryItem {
-            id: ts.to_string(),
-            text: text.clone(),
-            language: "en".to_string(),
-            timestamp: ts / 1000,
-        };
-        s.history.insert(0, item);
-        if s.history.len() > 50 {
-            s.history.truncate(50);
-        }
-        let path = s.history_path.clone();
-        save_history(&path, &s.history).map_err(|e| e.to_string())?;
-    }
-
-    app.emit(
-        "recognition-result",
-        serde_json::json!({"text": text, "language": "en", "confidence": 0.95}),
-    )
-    .map_err(|e| e.to_string())?;
-
-    Ok(())
-}
-
-#[tauri::command]
 fn get_autostart_enabled() -> Result<bool, String> {
     #[cfg(windows)]
     {
@@ -399,10 +413,17 @@ pub fn run() {
             std::fs::create_dir_all(&dir).ok();
             let history_path = dir.join("history.json");
             let history = load_history(&history_path);
+            let recorder = Recorder::new();
+            let player = Player::new();
+            if !config.audio.enable_sounds {
+                player.set_enabled(false);
+            }
             app.manage(Mutex::new(AppState {
                 config,
                 history,
                 history_path,
+                recorder,
+                player,
             }));
 
             use tauri::{
@@ -468,7 +489,6 @@ pub fn run() {
             get_stats,
             get_config,
             set_config,
-            run_demo,
             get_autostart_enabled,
             set_autostart_enabled,
         ])

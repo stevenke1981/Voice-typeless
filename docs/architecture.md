@@ -11,8 +11,8 @@
 
 1. [System Overview](#1-system-overview)
 2. [Project Structure Explanation](#2-project-structure-explanation)
-3. [Core Go Library API Design](#3-core-go-library-api-design)
-4. [IPC Protocol (Go Core ↔ Tauri ↔ Frontend)](#4-ipc-protocol)
+3. [Core Rust Library (vtl-core) API Overview](#3-core-rust-library-vtl-core-api-overview)
+4. [Tauri Command & Event API (vtl-core ↔ Frontend)](#4-tauri-command--event-api)
 5. [Data Flow Diagrams](#5-data-flow-diagrams)
 6. [Configuration Schema](#6-configuration-schema)
 7. [Audio Pipeline](#7-audio-pipeline)
@@ -54,7 +54,7 @@ graph TB
         PluginShell[tauri-plugin-shell]
     end
 
-    subgraph CoreLayer["Core Go Library (CGO / sidecar)"]
+    subgraph CoreLayer["Core Rust Library (vtl-core crate)"]
         AudioMod["audio\n(malgo/miniaudio)"]
         EngineMod["engine\n(sherpa-onnx)"]
         HotkeyMod["hotkey\n(cross-platform)"]
@@ -81,7 +81,7 @@ graph TB
 
     HK --> PluginHotkey
     PluginHotkey --> CMD
-    CMD <-->|"JSON-RPC"| CoreLayer
+    CMD -->|"direct call"| CoreLayer
     EVT --> FrontendLayer
     CoreLayer --> EVT
     EngineMod --> ONNX
@@ -94,13 +94,13 @@ graph TB
 | Component | Layer | Responsibility | Boundary |
 |-----------|-------|---------------|----------|
 | **Svelte 5 Frontend** | Frontend | All user-visible UI: settings, tray menu, floating indicator, history panel | Pure UI, no business logic |
-| **Tauri v2 Runtime** | Bridge | WebView host, native window management, IPC routing, OS integration | Thin bridge only; no recognition logic |
+| **Tauri v2 Runtime** | Bridge | WebView host, native window management, OS integration | Thin bridge only; no recognition logic |
 | **Tauri Plugins** | Bridge | Global hotkey capture, system tray, file system access, shell commands | Platform-specific OS calls |
-| **core/audio** | Core | Microphone enumeration, PCM capture at 16 kHz mono, ring buffer, VAD | Only audio I/O — no inference |
-| **core/engine** | Core | sherpa-onnx lifecycle, model loading, GPU/CPU dispatch, streaming inference | Only speech recognition — no UI |
-| **core/hotkey** | Core | Cross-platform hotkey registration fallback (used when Tauri plugin unavailable) | Platform abstraction |
-| **core/paste** | Core | Clipboard save/restore, simulated keyboard paste, per-platform API | Only clipboard & paste |
-| **core/processor** | Core | Filler-word filter, punctuation restoration, language mixing normalization, custom dictionary | Only text post-processing |
+| **core-rs/audio** | Core Library | Microphone enumeration, PCM capture at 16 kHz mono, ring buffer, VAD | Only audio I/O — no inference |
+| **core-rs/engine** | Core Library | sherpa-onnx lifecycle, model loading, GPU/CPU dispatch, streaming inference | Only speech recognition — no UI |
+| **core-rs/hotkey** | Core Library | Cross-platform hotkey registration fallback (used when Tauri plugin unavailable) | Platform abstraction |
+| **core-rs/paste** | Core Library | Clipboard save/restore, simulated keyboard paste, per-platform API | Only clipboard & paste |
+| **core-rs/processor** | Core Library | Filler-word filter, punctuation restoration, language mixing normalization, custom dictionary | Only text post-processing |
 | **models/** | Storage | ONNX model files, metadata JSON, download manager | Passive file store |
 | **plugins/** | Extension | User scripts loaded at runtime; transform recognition results | Sandboxed; no system access |
 
@@ -111,12 +111,12 @@ graph TB
 | **WebView footprint** | Uses OS WebView (< 1 MB added) | Bundles Chromium or OS WebView | Tauri ✅ |
 | **Security model** | Rust core + explicit capability permissions per command | Go runtime, weaker sandbox | Tauri ✅ |
 | **Plugin ecosystem** | Official plugin registry (hotkey, tray, fs, updater, etc.) | Manual integration required | Tauri ✅ |
-| **Go integration** | Go as CGO lib or sidecar process | Go is the host runtime | Wails easier, but acceptable |
+| **Core integration** | Rust `vtl-core` as workspace dep | Go is the host runtime | Tauri wins — no IPC overhead |
 | **Cross-platform** | Windows / macOS / Linux tier-1 | Same | Tie |
 | **Auto-updater** | `tauri-plugin-updater` built-in | Third-party | Tauri ✅ |
 | **Bundle size** | ~3–8 MB installer | ~5–15 MB | Tauri ✅ |
 
-**Decision**: Tauri v2. Go Core runs as a **sidecar process** (spawned by Tauri) communicating over a local Unix socket / named pipe. This cleanly separates Rust security from Go business logic and avoids CGO complexity on Windows.
+**Decision**: Tauri v2 with `vtl-core` as a **Rust workspace dependency** (`core-rs/` crate). Tauri commands import and call `vtl-core` functions directly — no sidecar process, no IPC, no CGO. This eliminates serialisation overhead, simplifies error handling, and reduces the binary footprint by removing the Go runtime. The `vtl-core` crate is designed as an independent library that can be embedded into other Rust projects without Tauri.
 
 ---
 
@@ -124,48 +124,51 @@ graph TB
 
 ```
 Voice-typeless/
-├── core/                        # Independent Go library (go module: github.com/vtl/core)
-│   ├── engine/                  # Speech engine abstraction — sherpa-onnx wrapper
-│   │   ├── engine.go            # Engine interface + factory
-│   │   ├── sensevoice.go        # SenseVoice model implementation
-│   │   ├── whisper.go           # Whisper-tiny model implementation
-│   │   ├── custom_onnx.go       # Generic ONNX model loader
-│   │   ├── device.go            # GPU/CPU device selection algorithm
-│   │   └── warmup.go            # Model warm-up strategy
-│   ├── audio/                   # Recording + sound effects (malgo)
-│   │   ├── recorder.go          # AudioRecorder implementation
-│   │   ├── player.go            # AudioPlayer (marimba sounds)
-│   │   ├── devices.go           # DeviceEnumerator
-│   │   ├── ringbuf.go           # Lock-free ring buffer
-│   │   ├── vad.go               # Voice Activity Detection
-│   │   └── sounds/              # Embedded sound files (.ogg)
-│   ├── hotkey/                  # Cross-platform hotkey manager
-│   │   ├── hotkey.go            # HotkeyManager interface
-│   │   ├── hotkey_windows.go    # Windows RegisterHotKey API
-│   │   ├── hotkey_darwin.go     # macOS Carbon/Cocoa hotkey
-│   │   └── combo.go             # Key combo parsing
-│   ├── paste/                   # Paste + clipboard protection
-│   │   ├── paster.go            # Paster interface
-│   │   ├── paste_windows.go     # SendInput + OpenClipboard
-│   │   ├── paste_darwin.go      # NSPasteboard + CGEvent
-│   │   └── guard.go             # ClipboardGuard (save/restore)
-│   ├── processor/               # AI post-processing + filler-word filter
-│   │   ├── processor.go         # TextProcessor interface + pipeline
-│   │   ├── filler.go            # FillerWordFilter (zh + en + ja + ko)
-│   │   ├── punctuation.go       # Punctuation restoration
-│   │   ├── language_mix.go      # Mixed-language space normalization
-│   │   ├── dictionary.go        # Custom dictionary replacement
-│   │   └── filler_words.go      # Embedded filler word lists
-│   ├── config/                  # Config schema + file I/O
-│   │   ├── config.go            # AppConfig struct + Load/Save
-│   │   └── defaults.go          # Default values
-│   ├── history/                 # SQLite history store
-│   │   ├── history.go           # HistoryStore interface
-│   │   └── sqlite.go            # SQLite implementation
-│   ├── ipc/                     # Sidecar IPC server
-│   │   ├── server.go            # JSON-RPC server (named pipe / Unix socket)
-│   │   └── protocol.go          # Request / Response types
-│   └── go.mod                   # Module: github.com/vtl/core
+├── core-rs/                     # Independent Rust library (crate: vtl-core)
+│   ├── src/
+│   │   ├── lib.rs               # Public API: re-exports all public types + trait objects
+│   │   ├── engine/
+│   │   │   ├── mod.rs           # Speech engine abstraction — sherpa-onnx wrapper
+│   │   │   ├── sensevoice.rs    # SenseVoice model implementation
+│   │   │   ├── whisper.rs       # Whisper-tiny model implementation
+│   │   │   ├── custom_onnx.rs   # Generic ONNX model loader
+│   │   │   ├── device.rs        # GPU/CPU device selection algorithm
+│   │   │   └── warmup.rs        # Model warm-up strategy
+│   │   ├── audio/
+│   │   │   ├── mod.rs           # Recording + sound effects (malgo/miniaudio)
+│   │   │   ├── recorder.rs      # AudioRecorder implementation
+│   │   │   ├── player.rs        # AudioPlayer (marimba sounds)
+│   │   │   ├── devices.rs       # DeviceEnumerator
+│   │   │   ├── ringbuf.rs       # Lock-free ring buffer
+│   │   │   ├── vad.rs           # Voice Activity Detection
+│   │   │   └── sounds/          # Embedded sound files (.ogg) — build.rs embeds
+│   │   ├── hotkey/
+│   │   │   ├── mod.rs           # Cross-platform hotkey manager
+│   │   │   ├── windows.rs       # Windows RegisterHotKey API
+│   │   │   ├── darwin.rs        # macOS Carbon/Cocoa hotkey
+│   │   │   └── combo.rs         # Key combo parsing
+│   │   ├── paste/
+│   │   │   ├── mod.rs           # Paste + clipboard protection
+│   │   │   ├── windows.rs       # SendInput + OpenClipboard
+│   │   │   ├── darwin.rs        # NSPasteboard + CGEvent
+│   │   │   └── guard.rs         # ClipboardGuard (save/restore)
+│   │   ├── processor/
+│   │   │   ├── mod.rs           # TextProcessor pipeline
+│   │   │   ├── filler.rs        # FillerWordFilter (zh + en + ja + ko)
+│   │   │   ├── punctuation.rs   # Punctuation restoration
+│   │   │   ├── language_mix.rs  # Mixed-language space normalization
+│   │   │   └── dictionary.rs    # Custom dictionary replacement
+│   │   ├── config.rs            # AppConfig struct + Load/Save (serde)
+│   │   ├── history.rs           # SQLite history store
+│   │   └── state.rs             # AppState — shared Arc<RwLock<...>> for Tauri commands
+│   ├── Cargo.toml               # vtl-core: default-features + dirs
+│   ├── build.rs                 # Embed sound files & model metadata
+│   └── tests/                   # Unit & integration tests
+│       ├── engine_tests.rs
+│       ├── audio_tests.rs
+│       ├── paste_tests.rs
+│       ├── processor_tests.rs
+│       └── hotkey_tests.rs
 │
 ├── frontend/                    # Svelte 5 + Vite frontend
 │   ├── src/
@@ -188,11 +191,11 @@ Voice-typeless/
 │   ├── tailwind.config.ts
 │   └── tsconfig.json
 │
-├── src-tauri/                   # Tauri Rust bridge
+├── src-tauri/                   # Tauri Rust application (depends on vtl-core)
 │   ├── src/
 │   │   ├── main.rs              # Tauri application bootstrap
-│   │   ├── commands.rs          # #[tauri::command] handlers (proxy to sidecar)
-│   │   ├── sidecar.rs           # Go sidecar process management
+│   │   ├── commands.rs          # #[tauri::command] handlers (calls vtl-core directly)
+│   │   ├── state.rs             # Tauri State<AppState> wiring
 │   │   ├── tray.rs              # System tray setup
 │   │   └── updater.rs           # Auto-update logic
 │   ├── icons/                   # App icons (all resolutions)
@@ -207,8 +210,6 @@ Voice-typeless/
 │
 ├── models/                      # Speech model files
 │   ├── manifest.json            # Available models metadata
-│   ├── downloader/              # Go model download manager
-│   │   └── downloader.go
 │   └── sensevoice-small/        # Default bundled model
 │       ├── model.onnx
 │       └── meta.json
@@ -231,410 +232,397 @@ Voice-typeless/
 │
 └── tests/                       # E2E tests
     ├── e2e/                     # Playwright-based E2E
-    ├── integration/             # Go integration tests
     └── fixtures/                # Audio fixture files (.wav)
 ```
 
 ---
 
-## 3. Core Go Library API Design
+## 3. Core Rust Library (vtl-core) API Overview
 
-All packages live under `github.com/vtl/core`. Each package exports only stable public interfaces; implementation types are unexported.
+> All modules live under the `vtl-core` crate (`core-rs/`). Each module exports only public types and trait objects via `lib.rs`; implementation details are private. The Rust code uses `#[async_trait]`, `Arc<T>`, and `serde` derives for type-safe, async-first APIs.
+
+
 
 ### 3.1 core/engine
 
-```go
-// core/engine/engine.go
+```rust
+// core-rs/src/engine/mod.rs — vtl-core engine module
 
-package engine
+use std::time::Duration;
+use serde::{Deserialize, Serialize};
 
-import (
-    "io"
-    "time"
-)
-
-// ModelType identifies the speech recognition model variant.
-type ModelType string
-
-const (
-    ModelSenseVoice  ModelType = "sensevoice"
-    ModelWhisperTiny ModelType = "whisper-tiny"
-    ModelCustomONNX  ModelType = "custom-onnx"
-)
-
-// DeviceType specifies the inference hardware target.
-type DeviceType string
-
-const (
-    DeviceAuto     DeviceType = "auto"      // Probe DirectML → CUDA → CPU
-    DeviceDirectML DeviceType = "directml"  // Windows DirectML (GPU)
-    DeviceCUDA     DeviceType = "cuda"      // NVIDIA CUDA
-    DeviceCPU      DeviceType = "cpu"       // CPU-only fallback
-)
-
-// ModelConfig carries all parameters needed to initialize a model.
-type ModelConfig struct {
-    Type       ModelType
-    ModelPath  string     // Absolute path to .onnx file
-    TokensPath string     // Path to tokens.txt (required by sherpa-onnx)
-    Device     DeviceType
-    Language   string     // "auto", "zh", "en", "ja", "ko", ...
-    NumThreads int        // 0 = use runtime.NumCPU() / 2
+/// Identifies the speech recognition model variant.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ModelType {
+    SenseVoice,
+    WhisperTiny,
+    CustomOnnx(String),
 }
 
-// RecognitionResult is the output of a single inference pass.
-type RecognitionResult struct {
-    Text       string
-    Language   string        // Detected language code
-    Confidence float64       // 0.0–1.0
-    Duration   time.Duration // Audio duration processed
-    Segments   []Segment     // Word-level timestamps (if available)
+/// Specifies the inference hardware target.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum DeviceType {
+    Auto,      // Probe DirectML → CUDA → CPU
+    DirectML,  // Windows DirectML (GPU)
+    Cuda,      // NVIDIA CUDA
+    Cpu,       // CPU-only fallback
 }
 
-// Segment represents a timed word or phrase within a result.
-type Segment struct {
-    Text  string
-    Start time.Duration
-    End   time.Duration
+/// Carries all parameters needed to initialise a model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelConfig {
+    pub model_type: ModelType,
+    pub model_path: String,     // Absolute path to .onnx file
+    pub tokens_path: String,    // Path to tokens.txt (sherpa-onnx)
+    pub device: DeviceType,
+    pub language: String,       // "auto", "zh", "en", "ja", "ko", ...
+    pub num_threads: usize,     // 0 = auto (half of available cores)
 }
 
-// Engine is the primary interface for speech recognition.
-// Implementations must be safe for concurrent use after LoadModel returns.
-type Engine interface {
-    // LoadModel initialises the model and warms up the inference session.
-    // Must be called exactly once before Recognize.
-    LoadModel(cfg ModelConfig) error
-
-    // Recognize performs inference on a complete audio buffer.
-    // audio must be 16 kHz, mono, normalised float32 in [-1.0, 1.0].
-    Recognize(audio []float32, sampleRate int) (*RecognitionResult, error)
-
-    // RecognizeStream performs inference on a streaming audio source.
-    // The reader must produce raw float32 LE samples at 16 kHz mono.
-    RecognizeStream(r io.Reader, sampleRate int) (<-chan *RecognitionResult, <-chan error)
-
-    // ModelInfo returns metadata about the currently loaded model.
-    ModelInfo() ModelInfo
-
-    // Close releases all resources held by the engine.
-    // The engine must not be used after Close returns.
-    Close() error
+/// Output of a single inference pass.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecognitionResult {
+    pub text: String,
+    pub language: String,        // Detected language code
+    pub confidence: f64,         // 0.0–1.0
+    pub duration: Duration,      // Audio duration processed
+    pub segments: Vec<Segment>,  // Word-level timestamps
 }
 
-// ModelInfo describes a loaded or available model.
-type ModelInfo struct {
-    ID          string
-    Type        ModelType
-    Name        string
-    Description string
-    SizeBytes   int64
-    Languages   []string
-    Device      DeviceType // Actual device in use
+/// A timed word or phrase within a result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Segment {
+    pub text: String,
+    pub start: Duration,
+    pub end: Duration,
 }
 
-// New creates an Engine for the given model type.
-// Returns an error if the model type is unknown.
-func New(modelType ModelType) (Engine, error) { /* factory */ return nil, nil }
+/// Primary trait for speech recognition.
+/// Implementations must be `Send + Sync` for concurrent use after `load_model`.
+#[async_trait::async_trait]
+pub trait Engine: Send + Sync {
+    /// LoadModel initialises the model and warms up the inference session.
+    /// Must be called exactly once before `recognize`.
+    async fn load_model(&mut self, cfg: ModelConfig) -> Result<(), Box<dyn std::error::Error>>;
 
-// ProbeDevice returns the best available DeviceType on the current system.
-func ProbeDevice() DeviceType { /* see device.go */ return DeviceCPU }
+    /// Recognize performs inference on a complete audio buffer.
+    /// `audio` must be 16 kHz, mono, normalised f32 in [-1.0, 1.0].
+    async fn recognize(&self, audio: &[f32], sample_rate: u32) -> Result<RecognitionResult, Box<dyn std::error::Error>>;
+
+    /// Metadata about the currently loaded model.
+    fn model_info(&self) -> ModelInfo;
+}
+
+/// Describes a loaded or available model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelInfo {
+    pub id: String,
+    pub model_type: ModelType,
+    pub name: String,
+    pub description: String,
+    pub size_bytes: u64,
+    pub languages: Vec<String>,
+    pub device: DeviceType,
+}
+
+/// Creates an Engine for the given model type.
+pub fn new_engine(model_type: &ModelType) -> Result<Box<dyn Engine>, Box<dyn std::error::Error>> {
+    // Factory dispatches to per-model implementations
+    Err("not implemented — use specific engine constructor".into())
+}
+
+/// Probes the best available DeviceType on the current system.
+pub fn probe_device() -> DeviceType {
+    // See device.rs for platform-specific probing logic
+    DeviceType::Cpu
+}
 ```
 
 ### 3.2 core/audio
 
-```go
-// core/audio/recorder.go
+```rust
+// core-rs/src/audio/mod.rs — vtl-core audio module
 
-package audio
+use std::time::Duration;
+use serde::{Deserialize, Serialize};
+use tokio::sync::broadcast;
 
-import "time"
+/// Canonical sample rate required by sherpa-onnx.
+pub const SAMPLE_RATE: u32 = 16_000;
 
-// SampleRate is the canonical sample rate required by sherpa-onnx.
-const SampleRate = 16000
-
-// DeviceInfo describes a physical audio input device.
-type DeviceInfo struct {
-    ID        string
-    Name      string
-    IsDefault bool
-    Channels  int
-    SampleRates []int
+/// Describes a physical audio input device.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceInfo {
+    pub id: String,
+    pub name: String,
+    pub is_default: bool,
+    pub channels: u16,
+    pub sample_rates: Vec<u32>,
 }
 
-// RecorderConfig configures an AudioRecorder session.
-type RecorderConfig struct {
-    DeviceID   string // "" or "default" → system default
-    SampleRate int    // Must be 16000 for direct engine use
-    Channels   int    // 1 = mono (required); 2 = stereo (downmixed internally)
-    BufferSize int    // Ring buffer size in samples (0 = 16000*30 = 30 s)
+/// Configuration for an AudioRecorder session.
+#[derive(Debug, Clone)]
+pub struct RecorderConfig {
+    pub device_id: String, // "" or "default" → system default
+    pub sample_rate: u32,  // Must be 16000 for direct engine use
+    pub channels: u16,     // 1 = mono (required); 2 = stereo (downmixed internally)
+    pub buffer_size: usize,// Ring buffer size in samples (0 = 16000*30 = 30 s)
 }
 
-// AudioChunk is a slice of PCM samples with metadata.
-type AudioChunk struct {
-    Samples    []float32
-    SampleRate int
-    CapturedAt time.Time
+impl Default for RecorderConfig {
+    fn default() -> Self {
+        Self {
+            device_id: "default".into(),
+            sample_rate: SAMPLE_RATE,
+            channels: 1,
+            buffer_size: (SAMPLE_RATE as usize) * 30,
+        }
+    }
 }
 
-// AudioRecorder captures microphone input.
-// All implementations use malgo (miniaudio) internally.
-type AudioRecorder interface {
-    // Start begins audio capture. Blocks until Stop or an error occurs.
-    Start(cfg RecorderConfig) error
-
-    // Stop ends capture and flushes the ring buffer.
-    Stop() error
-
-    // Cancel ends capture and discards buffered audio.
-    Cancel()
-
-    // Drain returns all buffered samples since the last Start.
-    // Safe to call only after Stop.
-    Drain() (*AudioChunk, error)
-
-    // Subscribe returns a channel that receives audio chunks in real time.
-    // Must be called before Start. The channel is closed when Stop/Cancel is called.
-    Subscribe() <-chan AudioChunk
+/// A slice of PCM samples with metadata.
+#[derive(Debug, Clone)]
+pub struct AudioChunk {
+    pub samples: Vec<f32>,
+    pub sample_rate: u32,
+    pub captured_at: std::time::Instant,
 }
 
-// AudioPlayer plays short notification sounds.
-type AudioPlayer interface {
-    // PlayStart plays the recording-start sound (non-blocking).
-    PlayStart() error
+/// Captures microphone input using malgo (miniaudio) internally.
+#[async_trait::async_trait]
+pub trait AudioRecorder: Send + Sync {
+    /// Start begins audio capture.
+    async fn start(&mut self, cfg: RecorderConfig) -> Result<(), Box<dyn std::error::Error>>;
 
-    // PlayStop plays the recording-stop / success sound (non-blocking).
-    PlayStop() error
+    /// Stop ends capture and flushes the ring buffer.
+    async fn stop(&mut self) -> Result<AudioChunk, Box<dyn std::error::Error>>;
 
-    // PlayCancel plays the cancel sound (non-blocking).
-    PlayCancel() error
+    /// Cancel ends capture and discards buffered audio.
+    async fn cancel(&mut self);
 
-    // SetEnabled enables or disables all sounds.
-    SetEnabled(enabled bool)
-
-    // SetVolume sets master volume 0.0–1.0.
-    SetVolume(volume float64)
-
-    // Close releases audio output resources.
-    Close() error
+    /// Subscribe returns a receiver for real-time audio chunks.
+    /// Call before start. The sender is closed when stop/cancel is called.
+    fn subscribe(&mut self) -> broadcast::Receiver<AudioChunk>;
 }
 
-// DeviceEnumerator lists available audio input devices.
-type DeviceEnumerator interface {
-    // ListInputDevices returns all available microphone devices.
-    ListInputDevices() ([]DeviceInfo, error)
-
-    // DefaultInputDevice returns the system-default microphone.
-    DefaultInputDevice() (*DeviceInfo, error)
+/// Plays short notification sounds (non-blocking).
+#[async_trait::async_trait]
+pub trait AudioPlayer: Send + Sync {
+    async fn play_start(&self) -> Result<(), Box<dyn std::error::Error>>;
+    async fn play_stop(&self) -> Result<(), Box<dyn std::error::Error>>;
+    async fn play_cancel(&self) -> Result<(), Box<dyn std::error::Error>>;
+    fn set_enabled(&mut self, enabled: bool);
+    fn set_volume(&mut self, volume: f64);  // 0.0–1.0
 }
 
-// NewRecorder creates a new AudioRecorder backed by malgo.
-func NewRecorder() AudioRecorder { return nil /* impl */ }
+/// Lists available audio input devices.
+pub trait DeviceEnumerator: Send + Sync {
+    fn list_input_devices(&self) -> Result<Vec<DeviceInfo>, Box<dyn std::error::Error>>;
+    fn default_input_device(&self) -> Result<DeviceInfo, Box<dyn std::error::Error>>;
+}
 
-// NewPlayer creates a new AudioPlayer backed by malgo.
-func NewPlayer() AudioPlayer { return nil /* impl */ }
-
-// NewEnumerator creates a new DeviceEnumerator backed by malgo.
-func NewEnumerator() DeviceEnumerator { return nil /* impl */ }
+pub fn new_recorder() -> impl AudioRecorder { /* sees malgo-sys */ }
+pub fn new_player() -> impl AudioPlayer { /* sees malgo-sys */ }
+pub fn new_enumerator() -> impl DeviceEnumerator { /* sees malgo-sys */ }
 ```
 
 ### 3.3 core/hotkey
 
-```go
-// core/hotkey/hotkey.go
+```rust
+// core-rs/src/hotkey/mod.rs — vtl-core hotkey module
 
-package hotkey
+use bitflags::bitflags;
+use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 
-import "context"
-
-// Modifier represents a keyboard modifier key bitmask.
-type Modifier uint32
-
-const (
-    ModNone    Modifier = 0
-    ModCtrl    Modifier = 1 << iota
-    ModShift
-    ModAlt
-    ModSuper   // Win key / Cmd key
-)
-
-// KeyCombo describes a hotkey combination.
-type KeyCombo struct {
-    Modifiers Modifier
-    Key       string // e.g., "Space", "V", "F1"
+bitflags! {
+    /// Keyboard modifier key bitmask.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct Modifier: u32 {
+        const NONE  = 0;
+        const CTRL  = 1 << 0;
+        const SHIFT = 1 << 1;
+        const ALT   = 1 << 2;
+        const SUPER = 1 << 3; // Win / Cmd key
+    }
 }
 
-// ParseKeyCombo parses a human-readable combo string like "Alt+Space".
-// Returns an error if the string is not recognisable.
-func ParseKeyCombo(s string) (KeyCombo, error) { return KeyCombo{}, nil /* impl */ }
-
-// String returns the canonical string representation, e.g. "Ctrl+Shift+V".
-func (k KeyCombo) String() string { return "" /* impl */ }
-
-// HotkeyAction identifies which action a hotkey triggers.
-type HotkeyAction string
-
-const (
-    ActionPushToTalk HotkeyAction = "push_to_talk"
-    ActionFreeSpeech HotkeyAction = "free_speech"
-    ActionCancel     HotkeyAction = "cancel"
-)
-
-// HotkeyEvent is emitted when a registered hotkey is pressed or released.
-type HotkeyEvent struct {
-    Action   HotkeyAction
-    Pressed  bool // true = key down, false = key up
-    Combo    KeyCombo
+/// A hotkey combination.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyCombo {
+    pub modifiers: Modifier,
+    pub key: String, // e.g. "Space", "V", "F1"
 }
 
-// HotkeyConfig maps actions to key combos.
-type HotkeyConfig struct {
-    PushToTalk KeyCombo
-    FreeSpeech KeyCombo
-    Cancel     KeyCombo
+impl KeyCombo {
+    /// Parses a human-readable combo string like "Alt+Space".
+    pub fn parse(s: &str) -> Result<Self, String> {
+        Err("not implemented — see hotkey/parser.rs".into())
+    }
 }
 
-// HotkeyManager registers global hotkeys and emits events.
-// Implementations are platform-specific (Windows: RegisterHotKey, macOS: Carbon).
-type HotkeyManager interface {
-    // Register registers all hotkeys in cfg.
-    // Returns an error if any combo is already in use by another application.
-    Register(cfg HotkeyConfig) error
-
-    // Unregister releases all registered hotkeys.
-    Unregister() error
-
-    // Events returns a channel that receives HotkeyEvents.
-    // The channel is buffered (capacity 16).
-    Events() <-chan HotkeyEvent
-
-    // Run blocks and processes OS hotkey messages until ctx is cancelled.
-    Run(ctx context.Context) error
+impl std::fmt::Display for KeyCombo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}+{}", self.modifiers, self.key)
+    }
 }
 
-// New creates a platform-appropriate HotkeyManager.
-func New() HotkeyManager { return nil /* platform factory */ }
+/// Identifies which action a hotkey triggers.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum HotkeyAction {
+    PushToTalk,
+    FreeSpeech,
+    Cancel,
+}
+
+/// Emitted when a registered hotkey is pressed or released.
+#[derive(Debug, Clone)]
+pub struct HotkeyEvent {
+    pub action: HotkeyAction,
+    pub pressed: bool, // true = key down, false = key up
+    pub combo: KeyCombo,
+}
+
+/// Maps actions to key combinations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HotkeyConfig {
+    pub push_to_talk: KeyCombo,
+    pub free_speech: KeyCombo,
+    pub cancel: KeyCombo,
+}
+
+/// Registers global hotkeys and emits events.
+/// Platform-specific: Windows → RegisterHotKey, macOS → Carbon.
+#[async_trait::async_trait]
+pub trait HotkeyManager: Send + Sync {
+    /// Register all hotkeys in config.
+    async fn register(&mut self, cfg: HotkeyConfig) -> Result<(), Box<dyn std::error::Error>>;
+
+    /// Unregister releases all registered hotkeys.
+    async fn unregister(&mut self) -> Result<(), Box<dyn std::error::Error>>;
+
+    /// Events returns a receiver for HotkeyEvents (capacity 16).
+    fn events(&mut self) -> mpsc::Receiver<HotkeyEvent>;
+
+    /// Run blocks and processes OS hotkey messages until cancelled.
+    async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>>;
+}
+
+/// Creates a platform-appropriate HotkeyManager.
+pub fn new_hotkey_manager() -> impl HotkeyManager {
+    // Platform-specific factory
+}
 ```
 
 ### 3.4 core/paste
 
 ```go
-// core/paste/paster.go
+// core-rs/src/paste/mod.rs — vtl-core paste module
 
-package paste
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
-import "time"
-
-// PasteMethod selects how text is inserted into the target application.
-type PasteMethod string
-
-const (
-    // PasteMethodClipboard saves text to clipboard, sends Ctrl+V / Cmd+V.
-    PasteMethodClipboard PasteMethod = "clipboard"
-    // PasteMethodSendInput sends each character via synthetic keyboard events.
-    // Slower but works in applications that intercept clipboard paste.
-    PasteMethodSendInput PasteMethod = "sendinput"
-)
-
-// PasteConfig configures a Paster instance.
-type PasteConfig struct {
-    Method          PasteMethod
-    ClipboardHoldMs int  // Minimum ms to hold clipboard before restoring (default 150)
-    RestoreClipboard bool // Whether to restore previous clipboard content
+/// Selects how text is inserted into the target application.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum PasteMethod {
+    /// Save text to clipboard, send Ctrl+V / Cmd+V.
+    Clipboard,
+    /// Send each character via synthetic keyboard events.
+    /// Slower but works in apps that intercept clipboard paste.
+    SendInput,
 }
 
-// Paster inserts text into the currently focused application.
-type Paster interface {
-    // Paste inserts text using the configured method.
-    // Blocks until the paste operation is confirmed complete.
-    Paste(text string) error
-
-    // Configure updates the paster's config at runtime.
-    Configure(cfg PasteConfig)
-
-    // Close releases any held resources.
-    Close() error
+/// Configures a Paster instance.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PasteConfig {
+    pub method: PasteMethod,
+    /// Minimum ms to hold clipboard before restoring (default 150).
+    pub clipboard_hold_ms: u64,
+    /// Whether to restore previous clipboard content.
+    pub restore_clipboard: bool,
 }
 
-// ClipboardGuard saves and restores clipboard contents around a paste operation.
-type ClipboardGuard interface {
-    // Save captures the current clipboard contents.
-    Save() error
-
-    // Restore puts back the previously saved clipboard contents.
-    // No-op if Save was not called.
-    Restore() error
-
-    // HoldDuration is the minimum delay between writing paste text and restoring.
-    HoldDuration() time.Duration
+impl Default for PasteConfig {
+    fn default() -> Self {
+        Self {
+            method: PasteMethod::Clipboard,
+            clipboard_hold_ms: 150,
+            restore_clipboard: true,
+        }
+    }
 }
 
-// NewPaster creates a platform-appropriate Paster.
-func NewPaster(cfg PasteConfig) Paster { return nil /* platform factory */ }
-
-// NewClipboardGuard creates a platform-appropriate ClipboardGuard.
-func NewClipboardGuard(holdDuration time.Duration) ClipboardGuard {
-    return nil /* platform factory */
+/// Inserts text into the currently focused application.
+#[async_trait::async_trait]
+pub trait Paster: Send + Sync {
+    /// Paste inserts text using the configured method.
+    async fn paste(&self, text: &str) -> Result<(), Box<dyn std::error::Error>>;
+    fn configure(&mut self, cfg: PasteConfig);
 }
+
+/// Saves and restores clipboard contents around a paste operation.
+pub trait ClipboardGuard: Send + Sync {
+    fn save(&mut self) -> Result<(), Box<dyn std::error::Error>>;
+    fn restore(&mut self) -> Result<(), Box<dyn std::error::Error>>;
+    fn hold_duration(&self) -> Duration;
+}
+
+pub fn new_paster(cfg: PasteConfig) -> impl Paster { /* platform factory */ }
+pub fn new_clipboard_guard(hold: Duration) -> impl ClipboardGuard { /* platform factory */ }
 ```
 
 ### 3.5 core/processor
 
 ```go
-// core/processor/processor.go
+// core-rs/src/processor/mod.rs — vtl-core processor module
 
-package processor
+use serde::{Deserialize, Serialize};
 
-// ProcessorConfig configures the text post-processing pipeline.
-type ProcessorConfig struct {
-    Language                 string   // "auto", "zh", "en", ...
-    FilterFillerWords        bool
-    MixedLanguageOptimization bool    // Insert spaces at CJK/Latin boundaries
-    CapitalizeSentences      bool     // Capitalize first letter of sentences
-    RestorePunctuation       bool     // AI-based punctuation restoration
-    CustomDictionary         []DictionaryEntry
+/// Configures the text post-processing pipeline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessorConfig {
+    pub language: String,              // "auto", "zh", "en", ...
+    pub filter_filler_words: bool,
+    pub mixed_language_optimization: bool, // Insert spaces at CJK/Latin boundaries
+    pub capitalize_sentences: bool,        // Capitalise first letter of sentences
+    pub restore_punctuation: bool,         // AI-based punctuation restoration
+    pub custom_dictionary: Vec<DictionaryEntry>,
 }
 
-// DictionaryEntry maps a recognised phrase to a preferred output form.
-type DictionaryEntry struct {
-    Input  string // What the model may output, e.g. "a i"
-    Output string // What to replace it with, e.g. "AI"
+/// Maps a recognised phrase to a preferred output form.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DictionaryEntry {
+    pub input: String,  // What the model may output, e.g. "a i"
+    pub output: String, // What to replace it with, e.g. "AI"
 }
 
-// TextProcessor is the main post-processing pipeline.
-// Processors are composable: each stage receives the output of the previous one.
-type TextProcessor interface {
-    // Process applies the full configured pipeline to raw recognised text.
-    Process(raw string) (string, error)
-
-    // Configure updates the processor config without re-creating the instance.
-    Configure(cfg ProcessorConfig)
+/// Main post-processing pipeline.
+/// Processors are composable: each stage receives the output of the previous one.
+pub trait TextProcessor: Send + Sync {
+    /// Process applies the full configured pipeline to raw recognised text.
+    fn process(&self, raw: &str) -> Result<String, Box<dyn std::error::Error>>;
+    fn configure(&mut self, cfg: ProcessorConfig);
 }
 
-// FillerWordFilter removes spoken filler words from recognised text.
-// Built-in lists cover: zh (那個/就是/嗯/啊), en (um/uh/like/you know),
-// ja (えーと/あの), ko (음/어).
-type FillerWordFilter interface {
-    // Filter removes filler words from text.
-    Filter(text string, language string) string
-
-    // AddCustom adds a user-defined filler word.
-    AddCustom(word string, language string)
+/// Removes spoken filler words from recognised text.
+/// Built-in lists: zh (那個/就是/嗯/啊), en (um/uh/like/you know),
+/// ja (えーと/あの), ko (음/어).
+pub trait FillerWordFilter: Send + Sync {
+    fn filter(&self, text: &str, language: &str) -> String;
+    fn add_custom(&mut self, word: String, language: String);
 }
 
-// NewTextProcessor creates a TextProcessor with the given config.
-func NewTextProcessor(cfg ProcessorConfig) TextProcessor { return nil /* impl */ }
-
-// NewFillerWordFilter creates a FillerWordFilter with the built-in word lists.
-func NewFillerWordFilter() FillerWordFilter { return nil /* impl */ }
+pub fn new_text_processor(cfg: ProcessorConfig) -> impl TextProcessor { /* impl */ }
+pub fn new_filler_word_filter() -> impl FillerWordFilter { /* impl */ }
 ```
 
 ---
 
-## 4. IPC Protocol
+## 4. Tauri Command & Event API (vtl-core ↔ Frontend)
 
-The Go Core sidecar exposes a **JSON-RPC 2.0** server over a named pipe (Windows: `\\.\pipe\vtl-core-<pid>`, macOS/Linux: `/tmp/vtl-core-<pid>.sock`). The Tauri Rust layer acts as a transparent proxy: Tauri commands deserialise the frontend payload and forward it to the Go sidecar; Go events are forwarded back as Tauri events.
+The `vtl-core` crate is a **Rust workspace dependency** of `src-tauri/`. Tauri commands call `vtl-core` functions directly — no sidecar process, no IPC serialisation, no JSON-RPC. The shared `AppState` (`Arc<RwLock<CoreState>>`) is registered with `tauri::Builder::manage()` and injected into each command via `tauri::State<'_, AppState>`.
 
-### 4.1 Tauri Commands (Frontend → Rust → Go)
+### 4.1 Tauri Commands (Frontend → vtl-core)
 
 All commands are invoked via `invoke(commandName, payload)` from the frontend.
 
@@ -710,74 +698,118 @@ export async function switchModel(modelId: string): Promise<void> {
 
 #### Rust Command Signatures (src-tauri/src/commands.rs)
 
+Commands receive `tauri::State<'_, AppState>` instead of a sidecar client. `AppState` wraps `vtl-core`'s `CoreState` in `Arc<RwLock<...>>` for shared mutation across async commands.
+
 ```rust
-// Each command proxies to the Go sidecar via JSON-RPC.
+// Each command calls vtl-core directly via AppState.
+
+use vtl_core::{
+    AppConfig, DeviceList, HistoryItem, ModelInfo, RecognitionResult,
+    self as core,
+};
+
+pub struct AppState {
+    pub core: Arc<tokio::sync::RwLock<core::CoreState>>,
+}
 
 #[tauri::command]
 async fn start_recording(
     mode: String,
-    sidecar: tauri::State<'_, SidecarClient>,
-) -> Result<(), String> { /* ... */ }
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let mut core = state.core.write().await;
+    core.start_recording(&mode).map_err(|e| e.to_string())
+}
 
 #[tauri::command]
 async fn stop_recording(
-    sidecar: tauri::State<'_, SidecarClient>,
-) -> Result<RecognitionResult, String> { /* ... */ }
+    state: tauri::State<'_, AppState>,
+) -> Result<RecognitionResult, String> {
+    let mut core = state.core.write().await;
+    core.stop_recording().map_err(|e| e.to_string())
+}
 
 #[tauri::command]
 async fn cancel_recording(
-    sidecar: tauri::State<'_, SidecarClient>,
-) -> Result<(), String> { /* ... */ }
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let mut core = state.core.write().await;
+    core.cancel_recording().map_err(|e| e.to_string())
+}
 
 #[tauri::command]
 async fn get_devices(
-    sidecar: tauri::State<'_, SidecarClient>,
-) -> Result<DeviceList, String> { /* ... */ }
+    state: tauri::State<'_, AppState>,
+) -> Result<DeviceList, String> {
+    let core = state.core.read().await;
+    core.get_devices().map_err(|e| e.to_string())
+}
 
 #[tauri::command]
 async fn set_device(
     device_id: String,
-    sidecar: tauri::State<'_, SidecarClient>,
-) -> Result<(), String> { /* ... */ }
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let mut core = state.core.write().await;
+    core.set_device(&device_id).map_err(|e| e.to_string())
+}
 
 #[tauri::command]
 async fn get_history(
     limit: u32,
-    sidecar: tauri::State<'_, SidecarClient>,
-) -> Result<Vec<HistoryItem>, String> { /* ... */ }
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<HistoryItem>, String> {
+    let core = state.core.read().await;
+    core.get_history(limit).map_err(|e| e.to_string())
+}
 
 #[tauri::command]
 async fn delete_history_item(
     id: String,
-    sidecar: tauri::State<'_, SidecarClient>,
-) -> Result<(), String> { /* ... */ }
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let mut core = state.core.write().await;
+    core.delete_history_item(&id).map_err(|e| e.to_string())
+}
 
 #[tauri::command]
 async fn get_config(
-    sidecar: tauri::State<'_, SidecarClient>,
-) -> Result<AppConfig, String> { /* ... */ }
+    state: tauri::State<'_, AppState>,
+) -> Result<AppConfig, String> {
+    let core = state.core.read().await;
+    Ok(core.get_config().clone())
+}
 
 #[tauri::command]
 async fn set_config(
     config: serde_json::Value,
-    sidecar: tauri::State<'_, SidecarClient>,
-) -> Result<(), String> { /* ... */ }
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let mut core = state.core.write().await;
+    core.set_config(config).map_err(|e| e.to_string())
+}
 
 #[tauri::command]
 async fn get_models(
-    sidecar: tauri::State<'_, SidecarClient>,
-) -> Result<Vec<ModelInfo>, String> { /* ... */ }
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<ModelInfo>, String> {
+    let core = state.core.read().await;
+    core.get_models().map_err(|e| e.to_string())
+}
 
 #[tauri::command]
 async fn switch_model(
     model_id: String,
-    sidecar: tauri::State<'_, SidecarClient>,
-) -> Result<(), String> { /* ... */ }
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let mut core = state.core.write().await;
+    core.switch_model(&model_id).await.map_err(|e| e.to_string())
+}
 ```
 
-### 4.2 Tauri Events (Go → Rust → Frontend)
+### 4.2 Tauri Events (vtl-core → Frontend)
 
-Events are emitted by the Go sidecar over the IPC channel; the Rust layer re-emits them as Tauri global events.
+Events are emitted by `vtl-core` directly via a shared `EventEmitter` (integrated with Tauri's global event system at startup). The frontend listens with the same typed wrappers.
 
 ```typescript
 // frontend/src/lib/events.ts — typed event listeners
@@ -861,50 +893,20 @@ export async function onVadSilence(
 }
 ```
 
-### 4.3 JSON-RPC Protocol (Rust ↔ Go Sidecar)
+### 4.3 Architecture: Direct Call vs. Sidecar IPC
 
-```json
-// Request (Rust → Go)
-{
-  "jsonrpc": "2.0",
-  "id": "uuid-v4",
-  "method": "start_recording",
-  "params": { "mode": "push_to_talk" }
-}
+The current architecture uses direct Rust function calls instead of a sidecar process:
 
-// Success Response (Go → Rust)
-{
-  "jsonrpc": "2.0",
-  "id": "uuid-v4",
-  "result": null
-}
-
-// Error Response (Go → Rust)
-{
-  "jsonrpc": "2.0",
-  "id": "uuid-v4",
-  "error": {
-    "code": -32001,
-    "message": "AUDIO_DEVICE_ERROR",
-    "data": { "detail": "Device not found: built-in mic" }
-  }
-}
-
-// Async Event (Go → Rust, id is null for push events)
-{
-  "jsonrpc": "2.0",
-  "id": null,
-  "method": "event",
-  "params": {
-    "name": "recognition-result",
-    "payload": {
-      "text": "Hello world",
-      "language": "en",
-      "confidence": 0.97
-    }
-  }
-}
-```
+| Concern | Sidecar (original) | Direct Call (current) |
+|---------|-------------------|----------------------|
+| **Communication** | JSON-RPC over named pipe / Unix socket | Rust function calls via `vtl-core` API |
+| **Serialisation** | JSON encode/decode per call | Zero-copy (same process, same address space) |
+| **State sharing** | Separate process, must re-read config from disk | `Arc<RwLock<CoreState>>` shared in-memory |
+| **Crash isolation** | Sidecar can restart independently | Process crashes with app (trade-off for simplicity) |
+| **Startup** | Tauri spawns sidecar, waits for IPC connect | `vtl-core::CoreState::new()` runs synchronously in `main.rs` |
+| **Latency overhead** | ~1–5 ms per call (IPC round-trip) | < 0.01 ms per call (same-thread dispatch) |
+| **Binary size** | + ~50 MB (Go runtime + std library) | Zero added (pure Rust) |
+| **Build complexity** | Cross-compile Go + generate CGO bindings | Single `cargo build` |
 
 ### 4.4 Shared TypeScript Types
 
@@ -966,14 +968,14 @@ export interface ModelInfo {
 ```mermaid
 sequenceDiagram
     actor User
-    participant HK as HotkeyManager<br/>(core/hotkey)
-    participant AR as AudioRecorder<br/>(core/audio)
-    participant AP as AudioPlayer<br/>(core/audio)
-    participant EV as IPC EventBus
+    participant HK as HotkeyManager<br/>(vtl_core::hotkey)
+    participant AR as AudioRecorder<br/>(vtl_core::audio)
+    participant AP as AudioPlayer<br/>(vtl_core::audio)
+    participant EV as Core EventBus<br/>(vtl_core::event)
     participant FE as Frontend<br/>(FloatingIndicator)
-    participant ENG as Engine<br/>(core/engine)
-    participant PROC as TextProcessor<br/>(core/processor)
-    participant PST as Paster<br/>(core/paste)
+    participant ENG as Engine<br/>(vtl_core::engine)
+    participant PROC as TextProcessor<br/>(vtl_core::processor)
+    participant PST as Paster<br/>(vtl_core::paste)
 
     User->>HK: Press Alt+Space (key-down)
     HK->>EV: HotkeyEvent{action=push_to_talk, pressed=true}
@@ -1018,9 +1020,9 @@ sequenceDiagram
     actor User
     participant HK as HotkeyManager
     participant AR as AudioRecorder
-    participant VAD as VAD Engine<br/>(core/audio/vad)
+    participant VAD as VAD Engine<br/>(vtl_core::audio::vad)
     participant AP as AudioPlayer
-    participant EV as IPC EventBus
+    participant EV as Core EventBus<br/>(vtl_core::event)
     participant FE as Frontend
     participant ENG as Engine
     participant PROC as TextProcessor
@@ -1092,7 +1094,7 @@ flowchart TD
 // frontend/src/lib/types.ts (AppConfig section)
 
 export interface HotkeyConfig {
-  /** Human-readable combo, e.g. "Alt+Space". Parsed by core/hotkey.ParseKeyCombo. */
+  /** Human-readable combo, e.g. "Alt+Space". Parsed by vtl_core::hotkey::KeyCombo::parse. */
   pushToTalk: string;
   freeSpeech: string;
   cancel: string;
@@ -1181,30 +1183,29 @@ export interface AppConfig {
 }
 ```
 
-### 6.2 Default Values (Go)
+### 6.2 Default Values (Rust)
 
-```go
-// core/config/defaults.go
+```rust
+// core-rs/src/config/defaults.rs
 
-package config
+use crate::config::{AppConfig, HotkeyConfig, AudioConfig, /* ... */};
 
-import "github.com/vtl/core/hotkey"
-
-func DefaultConfig() AppConfig {
-    return AppConfig{
-        Version: 1,
-        Hotkey: HotkeyConfig{
-            PushToTalk: "Alt+Space",
-            FreeSpeech: "Ctrl+Shift+V",
-            Cancel:     "Escape",
-        },
-        Audio: AudioConfig{
-            DeviceID:     "default",
-            SampleRate:   16000,
-            Channels:     1,
-            EnableSounds: true,
-            SoundVolume:  0.8,
-        },
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            hotkey: HotkeyConfig {
+                push_to_talk: "Alt+Space".into(),
+                free_speech: "Ctrl+Shift+V".into(),
+                cancel: "Escape".into(),
+            },
+            audio: AudioConfig {
+                device_id: "default".into(),
+                sample_rate: 16000,
+                channels: 1,
+                enable_sounds: true,
+                sound_volume: 0.8,
+            },
         Model: ModelConfig{
             ActiveModelID: "sensevoice-small",
             ModelsDir:     "", // resolved to {AppData}/vtl/models at runtime
@@ -1284,16 +1285,14 @@ Microphone (OS driver)
 
 ### 7.2 Device Enumeration and Selection
 
-```go
-// Pseudocode — core/audio/devices.go
+```rust
+// Pseudocode — core-rs/src/audio/devices.rs
 
-func (e *malgoEnumerator) ListInputDevices() ([]DeviceInfo, error) {
-    ctx := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
-    defer ctx.Uninit()
-
-    infos, err := ctx.Devices(malgo.Capture)
-    // Map malgo.DeviceInfo → our DeviceInfo, flagging IsDefault
-    return devices, err
+fn list_input_devices() -> Result<Vec<DeviceInfo>, Box<dyn std::error::Error>> {
+    let ctx = malgo::Context::new(None, malgo::ContextConfig::default(), None)?;
+    let infos = ctx.devices(malgo::DeviceType::Capture)?;
+    // Map malgo::DeviceInfo → our DeviceInfo, flagging is_default
+    Ok(devices)
 }
 ```
 
@@ -1342,25 +1341,31 @@ VAD chunk processing loop (32ms chunks):
 
 ### 7.5 Audio Chunk Handoff to Inference
 
-```go
-// core/ipc/server.go — after Stop() is called
+```rust
+// src-tauri/src/commands.rs — Tauri command for stop_recording
 
-func (s *Server) handleStopRecording() (*RecognitionResult, error) {
-    chunk, err := s.recorder.Drain()
-    if err != nil {
-        return nil, err
-    }
-    // Ensure exactly 16000 Hz (should already be after device resampling)
-    result, err := s.engine.Recognize(chunk.Samples, chunk.SampleRate)
-    if err != nil {
-        return nil, err
-    }
-    processed, err := s.processor.Process(result.Text)
-    if err != nil {
-        processed = result.Text // graceful degradation
-    }
-    result.Text = processed
-    return result, nil
+#[tauri::command]
+async fn stop_recording(
+    state: tauri::State<'_, AppState>,
+) -> Result<RecognitionResult, String> {
+    let mut core = state.core.write().await;
+
+    // Drain the audio ring buffer
+    let chunk = core.drain_audio().map_err(|e| e.to_string())?;
+
+    // Run inference (16 kHz float32 PCM)
+    let mut result = core
+        .recognize(&chunk.samples, chunk.sample_rate)
+        .map_err(|e| e.to_string())?;
+
+    // Apply post-processing pipeline (graceful degradation on error)
+    let processed = core
+        .processor()
+        .process(&result.text)
+        .unwrap_or(result.text.clone());
+    result.text = processed;
+
+    Ok(result)
 }
 ```
 
@@ -1388,37 +1393,36 @@ Startup sequence:
 
 ### 8.2 DirectML / CUDA / CPU Device Selection Algorithm
 
-```go
-// core/engine/device.go
+```rust
+// core-rs/src/engine/device.rs
 
-func ProbeDevice() DeviceType {
+pub fn probe_device() -> DeviceType {
     // 1. Check OS version (Win7 → skip DirectML)
-    if isWindows7() {
-        return DeviceCPU
+    if is_windows_7() {
+        return DeviceType::Cpu;
     }
 
     // 2. Try DirectML (Windows 10+ with any GPU)
-    if runtime.GOOS == "windows" {
-        if testDirectML() {
-            return DeviceDirectML
-        }
+    #[cfg(target_os = "windows")]
+    if test_direct_ml() {
+        return DeviceType::DirectML;
     }
 
     // 3. Try CUDA (any OS, NVIDIA GPU)
-    if testCUDA() {
-        return DeviceCUDA
+    if test_cuda() {
+        return DeviceType::Cuda;
     }
 
     // 4. Fall back to CPU
-    return DeviceCPU
+    DeviceType::Cpu
 }
 
-func testDirectML() bool {
+fn test_direct_ml() -> bool {
     // Attempt to create a minimal ONNX Runtime session with DML provider.
-    // If it panics/errors → return false.
-    defer func() { recover() }()
-    // ... minimal session creation
-    return true
+    std::panic::catch_unwind(|| {
+        // ... minimal session creation via sherpa-onnx-sys
+    })
+    .is_ok()
 }
 ```
 
@@ -1470,8 +1474,8 @@ To register a new model:
 
 1. Place ONNX file(s) in `models/{your-model-id}/`
 2. Create `meta.json` with the model metadata (same schema as manifest entry)
-3. Implement the `Engine` interface in `core/engine/your_model.go`
-4. Register in `core/engine/engine.go` factory `New()` function
+3. Implement the `Engine` trait in `core-rs/src/engine/your_model.rs`
+4. Register in `core-rs/src/engine/mod.rs` factory `new_engine()` function
 5. Add entry to `models/manifest.json`
 
 The `custom-onnx` model type provides a generic wrapper for any sherpa-onnx compatible ONNX model without code changes.
@@ -1544,45 +1548,45 @@ Plugins are scripts in `plugins/` that transform recognition results. The Core l
 
 ```
 plugins/
-├── my-transform.js      # JavaScript plugin (via Goja JS engine)
-├── code-format.lua      # Lua plugin (via gopher-lua)
+├── my-transform.rhai    # Rhai plugin (rhai crate — Rust-native scripting)
+├── code-format.lua      # Lua plugin (rlua crate)
 └── disabled/            # Plugins in this subfolder are not loaded
 ```
 
 ### 10.2 Plugin Execution Model
 
-```go
-// core/processor/plugin_runner.go (conceptual)
+```rust
+// core-rs/src/processor/plugin_runner.rs (conceptual)
 
-type Plugin interface {
-    // Name returns the plugin's identifier.
-    Name() string
+#[async_trait::async_trait]
+pub trait Plugin: Send + Sync {
+    /// Returns the plugin's identifier.
+    fn name(&self) -> &str;
 
-    // OnRecognitionResult is the primary hook.
-    // Receives the post-processed text; returns the final text.
-    // Must return within 500ms or will be killed (timeout).
-    OnRecognitionResult(text string, language string) (string, error)
+    /// Primary hook: receives post-processed text; returns final text.
+    /// Must return within 500ms or the future is cancelled (timeout).
+    async fn on_recognition_result(&self, text: &str, language: &str) -> Result<String, Box<dyn std::error::Error>>;
 }
 ```
 
-**JavaScript plugins** (Goja engine — pure Go, no Node.js dependency):
+**Rhai plugins** (rhai crate — pure Rust, no V8/Node dependency):
 
-```javascript
-// plugins/uppercase.js
-export function onRecognitionResult(text, language) {
-  // Available API: vtl.log(msg), vtl.config.get(key)
-  return text.toUpperCase();
+```rust
+// plugins/uppercase.rhai
+fn on_recognition_result(text, language) {
+    // Available API: vtl::log(msg), vtl::config_get(key)
+    text.to_upper()
 }
 ```
 
-**Lua plugins** (gopher-lua):
+**Lua plugins** (rlua crate):
 
 ```lua
 -- plugins/code_format.lua
-function onRecognitionResult(text, language)
+function on_recognition_result(text, language)
   if language == "en" then
-    -- Replace "function" with "func" for Go code mode
-    return text:gsub("function ", "func ")
+    -- Replace "function" with "func" for Rust code mode
+    return text:gsub("function ", "fn ")
   end
   return text
 end
@@ -1590,14 +1594,14 @@ end
 
 ### 10.3 Sandboxing Strategy
 
-| Restriction | JavaScript (Goja) | Lua (gopher-lua) |
-|-------------|-------------------|-------------------|
-| File system access | ❌ Blocked (no `require('fs')`) | ❌ Blocked (`io.*` removed) |
-| Network access | ❌ No fetch/XMLHttpRequest | ❌ No socket lib |
-| OS commands | ❌ No `exec` | ❌ `os.execute` removed |
-| CPU time limit | 500 ms timeout goroutine | 500 ms timeout goroutine |
-| Memory limit | Goja VM max heap 32 MB | gopher-lua max stack 100 |
-| Allowed VTL API | `vtl.log`, `vtl.config.get` | `vtl.log`, `vtl.config_get` |
+| Restriction | Rhai | Lua (rlua) |
+|-------------|------|------------|
+| File system access | ❌ Blocked (`File::open` sandboxed) | ❌ Blocked (`io.*` removed) |
+| Network access | ❌ No socket/cURL hooks | ❌ No socket lib |
+| OS commands | ❌ No `std::process::Command` | ❌ `os.execute` removed |
+| CPU time limit | 500 ms timeout via `tokio::time::timeout` | 500 ms timeout via `tokio::time::timeout` |
+| Memory limit | Recursion depth & statement limits | rlua max stack 100 |
+| Allowed VTL API | `vtl::log`, `vtl::config_get` | `vtl.log`, `vtl.config_get` |
 
 Plugin failures are **non-fatal**: if a plugin errors or times out, the original text is used and the error is logged.
 
@@ -1639,30 +1643,28 @@ Final text → Paste
 | System tray | ✅ | ✅ |
 | Clipboard API | ✅ | ✅ |
 
-**Win7 delivery**: Because Tauri v2 requires WebView2 (unavailable on Win7), the Win7 build uses a **standalone Go binary + minimal HTML served via embedded HTTP + system WebView via `go-webview2` fallback or `lorca`**. The Core library is identical; only the UI host differs.
+**Win7 delivery**: Because Tauri v2 requires WebView2 (unavailable on Win7), the Win7 build uses a **standalone Rust binary + axum embedded HTTP server + system WebView via `wry` crate (fallback WebView implementation)**. The Core library (`core-rs`) is fully reused; only the UI host differs.
 
 ### 11.2 Win7 Slim Build Constraints
 
 - **No DirectML**: `ProbeDevice()` returns `DeviceCPU` on Win7 (detected via `RtlGetVersion`)
-- **No Tauri**: CLI wrapper + minimal embedded web UI (lorca or go-astilectron mini)
+- **No Tauri**: CLI wrapper + minimal embedded web UI (wry + axum)
 - **CPU threads**: Default to `NumCPU` for faster inference on CPU
 - **Model size**: Win7 bundle includes only `sensevoice-small` (65 MB); no download manager
 - **No auto-update**: Manual download from GitHub Releases
 
 ### 11.3 Build Tags
 
-```go
-// core/engine/device_windows.go
-//go:build windows && !win7
-
-func isWindows7() bool { return false }
+```rust
+// core-rs/src/engine/device_windows.rs
+#[cfg(all(windows, not(feature = "win7")))]
+fn is_windows_7() -> bool { false }
 ```
 
-```go
-// core/engine/device_win7.go
-//go:build win7
-
-func isWindows7() bool { return true }
+```rust
+// core-rs/src/engine/device_win7.rs
+#[cfg(feature = "win7")]
+fn is_windows_7() -> bool { true }
 ```
 
 Build commands:
@@ -1671,13 +1673,13 @@ Build commands:
 # Full Windows 10/11 build (with Tauri)
 cargo tauri build
 
-# Win7 slim build (Go only, CPU inference)
-go build -tags win7 -o vtl-win7.exe ./cmd/vtl-win7/
+# Win7 slim build (Rust only, CPU inference, wry-based UI)
+cargo build --features win7 -p vtl-win7
 ```
 
 ### 11.4 Win7 Specific Hotkey Implementation
 
-On Win7, `tauri-plugin-hotkey` is unavailable. The `core/hotkey` package's `hotkey_windows.go` uses the classic Win32 `RegisterHotKey` / `MSG` loop directly via `golang.org/x/sys/windows`.
+On Win7, `tauri-plugin-hotkey` is unavailable. The `vtl-core::hotkey` module uses the classic Win32 `RegisterHotKey` / `MSG` loop directly via the `windows-sys` crate.
 
 ---
 
@@ -1687,7 +1689,7 @@ On Win7, `tauri-plugin-hotkey` is unavailable. The `core/hotkey` package's `hotk
 
 | Criterion | Options | Decision | Rationale | Trade-offs |
 |-----------|---------|----------|-----------|------------|
-| Desktop framework | Tauri v2, Wails v3, Electron, Qt | **Tauri v2** | OS WebView minimises install size; Rust security model; official plugin ecosystem for hotkey, tray, updater | Go must run as sidecar (extra IPC hop); CGO not needed |
+| Desktop framework | Tauri v2, Wails v3, Electron, Qt | **Tauri v2** | OS WebView minimises install size; Rust security model; official plugin ecosystem for hotkey, tray, updater | Lower Go ecosystem compatibility; Rust learning curve for team |
 
 ### 12.2 sherpa-onnx vs. whisper.cpp vs. vosk
 
@@ -1695,12 +1697,12 @@ On Win7, `tauri-plugin-hotkey` is unavailable. The `core/hotkey` package's `hotk
 |-----------|-------------|-------------|------|
 | SenseVoice support | ✅ First-class | ❌ | ❌ |
 | DirectML support | ✅ | ❌ | ❌ |
-| Go bindings | ✅ Official | CGO only | ✅ |
+| Rust bindings | ✅ `sherpa-onnx-sys` | CGO only | N/A |
 | Streaming | ✅ | Limited | ✅ |
 | Model variety | High | Whisper only | Medium |
 | **Decision** | ✅ **Selected** | ❌ | ❌ |
 
-**Rationale**: sherpa-onnx is the only option that provides official Go bindings, SenseVoice support, and DirectML acceleration in a single library.
+**Rationale**: sherpa-onnx is the only option that provides SenseVoice support, DirectML acceleration, and Rust bindings via `sherpa-onnx-sys` in a single library.
 
 ### 12.3 malgo vs. portaudio vs. oto
 
@@ -1727,55 +1729,57 @@ On Win7, `tauri-plugin-hotkey` is unavailable. The `core/hotkey` package's `hotk
 
 **Rationale**: Svelte 5 runes match the event-driven nature of voice UI (reactive state changes on audio events); smallest bundle suits the lightweight philosophy.
 
-### 12.5 Go Core as Sidecar vs. CGO Library
+### 12.5 vtl-core: Rust Crate vs. Go Sidecar
 
 | Approach | Pros | Cons |
 |----------|------|------|
-| **Sidecar process** (selected) | Clean process isolation; Rust need not know Go types; crashable without killing UI; easy restart | Extra IPC latency (~1 ms); more complex startup |
-| CGO library | Lower IPC overhead | Crash in Go kills Rust/WebView; complex cross-compilation; CGO build complexity on Windows |
+| **Rust crate `vtl-core`** (selected) | Zero IPC overhead; single `cargo build`; same memory space; simpler error handling; no cross-compilation | Rust learning curve; no Go runtime benefits |
+| Go sidecar + JSON-RPC | Process isolation | ~1 ms IPC latency; dual build system; larger binary (+~50 MB Go runtime) |
 
-**Decision**: Sidecar. The 1 ms IPC overhead is negligible compared to ~100 ms inference time.
+**Decision**: Rust crate. Eliminates serialisation overhead, simplifies the build pipeline, and reduces binary size by ~50 MB vs Go sidecar.
 
 ### 12.6 SQLite vs. JSON File for History
 
 | Approach | Pros | Cons |
 |----------|------|------|
-| **SQLite** (selected) | Query, sort, delete, retention cleanup; future FTS | Adds `mattn/go-sqlite3` CGO dep |
+| **SQLite** (selected) | Query, sort, delete, retention cleanup; future FTS | Adds `rusqlite` dep |
 | JSON file | Zero deps; simple | No efficient query; file grows unbounded |
 
-**Decision**: SQLite with `modernc.org/sqlite` (pure Go, no CGO) for Win7 compatibility.
+**Decision**: SQLite via `rusqlite` for structured history storage.
 
-### 12.7 Plugin Runtime: Goja (JS) + gopher-lua vs. WebAssembly
+### 12.7 Plugin Runtime: Rhai + rlua vs. WebAssembly
 
 | Approach | Pros | Cons |
 |----------|------|------|
-| **Goja + gopher-lua** (selected) | Familiar languages; pure Go; fast startup | Two runtimes to maintain |
-| WASM (wazero) | Single runtime; better sandboxing | Complex plugin authoring; larger binary |
+| **Rhai + rlua** (selected) | Familiar syntax; fast compile; Rust-native | Two runtimes to maintain |
+| WASM (wasmtime) | Single runtime; better sandboxing | Complex plugin authoring; larger binary |
 
-**Decision**: Goja + gopher-lua for v1. WASM migration path kept open for v2.
+**Decision**: Rhai + rlua for v1. WASM migration path kept open for v2.
 
 ---
 
 ## 13. Dependency Graph
 
-### 13.1 Go Module Dependency Tree
+### 13.1 vtl-core Crate Dependency Tree (core-rs/)
 
 ```
-github.com/vtl/core
-├── github.com/k2-fsa/sherpa-onnx-go          # Speech recognition
+vtl-core (core-rs/Cargo.toml)
+├── sherpa-onnx-sys                           # Speech recognition (C bindings)
 │   └── (bundles onnxruntime + sherpa-onnx C libs)
-├── github.com/gen2brain/malgo                  # Audio capture/playback
-│   └── (bundles miniaudio.h)
-├── modernc.org/sqlite                          # Pure-Go SQLite (history)
-├── github.com/dop251/goja                     # JavaScript plugin runtime
-├── github.com/yuin/gopher-lua                 # Lua plugin runtime
-├── golang.org/x/sys                           # Low-level OS APIs (hotkey, clipboard)
-├── github.com/google/uuid                     # UUID generation (history IDs)
-└── go.uber.org/zap                            # Structured logging
+├── malgo-sys                                 # Audio capture/playback (miniaudio C bindings)
+├── rusqlite                                  # History storage
+├── rhai                                      # JavaScript-like plugin runtime
+├── rlua                                      # Lua plugin runtime
+├── windows-sys (Windows) / libc (Unix)       # Low-level OS APIs (hotkey, clipboard)
+├── uuid                                      # UUID generation (history IDs)
+├── serde + serde_json                        # Serialisation
+├── tokio                                     # Async runtime
+├── log                                       # Structured logging
+└── thiserror                                 # Error derive
 
 // Dev / test only
-├── github.com/stretchr/testify               # Test assertions
-└── github.com/golang/mock                    # Interface mocking
+├── rstest                                    # Test fixtures
+└── mockall                                   # Trait mocking
 ```
 
 ### 13.2 npm / Frontend Dependency Tree
@@ -1807,13 +1811,13 @@ frontend/
 src-tauri/Cargo.toml
 ├── tauri@^2.0                  # Core Tauri runtime
 ├── tauri-build@^2.0            # Build-time codegen
+├── vtl-core                    # Workspace dependency — core library
 ├── serde@^1.0                  # JSON serialisation
 ├── serde_json@^1.0             # JSON parsing
-├── tokio@^1.0                  # Async runtime (for sidecar IPC)
+├── tokio@^1.0                  # Async runtime
 ├── tauri-plugin-hotkey@^2.0   # Global hotkey plugin
 ├── tauri-plugin-tray@^2.0     # System tray plugin
 ├── tauri-plugin-fs@^2.0       # File system plugin
-├── tauri-plugin-shell@^2.0    # Shell / sidecar plugin
 └── tauri-plugin-updater@^2.0  # Auto-update plugin
 ```
 
@@ -1846,7 +1850,7 @@ src-tauri/Cargo.toml
 
 ## Appendix C: Security Considerations
 
-1. **No network access by Core**: The Go sidecar has no outbound HTTP calls during recognition. All inference is local.
+1. **No network access by Core**: The `vtl-core` crate has no outbound HTTP calls during recognition. All inference is local.
 2. **Model integrity**: SHA256 hash checked on every load. Tampered models are rejected.
 3. **Plugin sandboxing**: Plugins cannot access file system, network, or OS APIs (see §10.3).
 4. **Clipboard contents**: Never logged. Clipboard save/restore operates in memory only.
@@ -1858,7 +1862,7 @@ src-tauri/Cargo.toml
 
 | # | Question | Proposed Resolution |
 |---|----------|---------------------|
-| 1 | Should the Go sidecar restart automatically if it crashes? | Yes — Tauri `shell` plugin's `sidecar` feature supports `restart_on_crash: true` |
+| 1 | (Resolved) vtl-core is in-process — crash = app crash, handled by Rust error types | N/A — all errors propagate as typed `Result<T, CoreError>` |
 | 2 | What is the maximum recording length in push-to-talk mode? | Cap at 30 s (ring buffer size). Longer sessions → streaming inference. |
 | 3 | Should history be encrypted at rest? | SQLCipher integration planned for v1.1 |
 | 4 | Streaming (partial) results for long free-speech sessions? | sherpa-onnx supports online recogniser; implement in v1.1 |
@@ -1873,8 +1877,8 @@ src-tauri/Cargo.toml
 ## 14. v0.2.0 Feature Implementations
 
 This section documents the ten features shipped in v0.2.0 and their implementation
-boundaries across the Tauri (Rust) and Svelte (frontend) layers. The Go Core sidecar is
-**not yet integrated** for these features — all persistence is handled directly in Rust.
+boundaries across the Tauri (Rust) and Svelte (frontend) layers. All persistence is handled
+directly by the `vtl-core` crate.
 
 ### 14.1 AppState — Shared In-Memory State
 
@@ -1952,8 +1956,8 @@ async fn set_config(
   atomically.
 
 > **v0.2.0 vs. architecture spec**: The long-term architecture (§12.6) specifies SQLite
-> via `modernc.org/sqlite` for scalability. v0.2.0 uses a JSON file to keep the
-> implementation simple and dependency-free while the Go Core sidecar is pending. The
+> via `rusqlite` for scalability. v0.2.0 uses a JSON file to keep the
+> implementation simple and dependency-free. The
 > migration path to SQLite is non-breaking (same `HistoryItem` schema).
 
 ---
@@ -2229,7 +2233,7 @@ All user data is stored in the Windows app-data directory under a dedicated fold
 ### 15.2 config.json Schema
 
 See [§6 Configuration Schema](#6-configuration-schema) for the full `AppConfig` TypeScript
-interface and Go `DefaultConfig()` implementation.
+interface; the Rust `DefaultConfig()` implementation follows the same schema.
 
 **Example `config.json`**:
 
