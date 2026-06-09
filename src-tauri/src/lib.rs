@@ -2,64 +2,65 @@ use std::sync::Mutex;
 use std::path::PathBuf;
 use tauri::{Emitter, Manager, State};
 
-// ── Config structs ─────────────────────────────────────────────────────────────
+use vtl_core::config::AppConfig;
+use vtl_core::history::HistoryItem;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct HotkeyConfig {
-    push_to_talk: String,
-    free_speech: String,
-    cancel: String,
-}
+// ── Config helpers ─────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct AudioConfig {
-    device_id: String,
-    enable_sounds: bool,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct ModelConfig {
-    active_model_id: String,
-    device: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct UIConfig {
-    theme: String,
-    language: String,
-    show_floating_indicator: bool,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct AppConfig {
-    hotkey: HotkeyConfig,
-    audio: AudioConfig,
-    model: ModelConfig,
-    ui: UIConfig,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        AppConfig {
-            hotkey: HotkeyConfig {
-                push_to_talk: "Alt+Space".to_string(),
-                free_speech: "Ctrl+Shift+V".to_string(),
-                cancel: "Escape".to_string(),
-            },
-            audio: AudioConfig {
-                device_id: "default".to_string(),
-                enable_sounds: true,
-            },
-            model: ModelConfig {
-                active_model_id: "sensevoice-small".to_string(),
-                device: "auto".to_string(),
-            },
-            ui: UIConfig {
-                theme: "dark".to_string(),
-                language: "en".to_string(),
-                show_floating_indicator: true,
-            },
+fn camel_to_snake(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() + 4);
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() {
+            if i > 0 {
+                result.push('_');
+            }
+            for lower in c.to_lowercase() {
+                result.push(lower);
+            }
+        } else {
+            result.push(c);
         }
+    }
+    result
+}
+
+fn convert_keys_camel_to_snake(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            let keys: Vec<String> = map.keys().cloned().collect();
+            for key in keys {
+                let snake = camel_to_snake(&key);
+                if snake != key {
+                    if let Some(v) = map.remove(&key) {
+                        map.insert(snake, v);
+                    }
+                }
+            }
+            for v in map.values_mut() {
+                convert_keys_camel_to_snake(v);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for v in arr.iter_mut() {
+                convert_keys_camel_to_snake(v);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn deep_merge(a: &mut serde_json::Value, b: serde_json::Value) {
+    match (a, b) {
+        (serde_json::Value::Object(ref mut a_map), serde_json::Value::Object(b_map)) => {
+            for (k, v) in b_map {
+                if a_map.contains_key(&k) && v.is_object() {
+                    deep_merge(&mut a_map[&k], v);
+                } else {
+                    a_map.insert(k, v);
+                }
+            }
+        }
+        (a, b) => *a = b,
     }
 }
 
@@ -113,52 +114,15 @@ fn available_models(active_id: &str) -> Vec<ModelInfo> {
     ]
 }
 
-// ── History ────────────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct HistoryItem {
-    id: String,
-    text: String,
-    language: String,
-    timestamp: i64,
-}
-
 // ── App state ──────────────────────────────────────────────────────────────────
 
 struct AppState {
     config: AppConfig,
     history: Vec<HistoryItem>,
-    config_path: PathBuf,
     history_path: PathBuf,
 }
 
 // ── I/O helpers ────────────────────────────────────────────────────────────────
-
-fn data_dir() -> PathBuf {
-    #[cfg(windows)]
-    {
-        let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
-        PathBuf::from(appdata).join("VoiceTypeless")
-    }
-    #[cfg(not(windows))]
-    {
-        dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("VoiceTypeless")
-    }
-}
-
-fn load_config(path: &PathBuf) -> AppConfig {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
-}
-
-fn save_config(path: &PathBuf, config: &AppConfig) -> Result<(), String> {
-    let json = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
-    std::fs::write(path, json).map_err(|e| e.to_string())
-}
 
 fn load_history(path: &PathBuf) -> Vec<HistoryItem> {
     std::fs::read_to_string(path)
@@ -241,7 +205,7 @@ fn set_active_model(
 ) -> Result<(), String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
     s.config.model.active_model_id = model_id;
-    save_config(&s.config_path, &s.config)
+    vtl_core::config::save(&s.config).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -307,46 +271,13 @@ fn get_config(state: State<'_, Mutex<AppState>>) -> Result<AppConfig, String> {
 #[tauri::command]
 fn set_config(state: State<'_, Mutex<AppState>>, config: serde_json::Value) -> Result<(), String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
-    if let Some(hotkey) = config.get("hotkey") {
-        if let Some(v) = hotkey.get("push_to_talk").and_then(|v| v.as_str()) {
-            s.config.hotkey.push_to_talk = v.to_string();
-        }
-        if let Some(v) = hotkey.get("free_speech").and_then(|v| v.as_str()) {
-            s.config.hotkey.free_speech = v.to_string();
-        }
-        if let Some(v) = hotkey.get("cancel").and_then(|v| v.as_str()) {
-            s.config.hotkey.cancel = v.to_string();
-        }
-    }
-    if let Some(audio) = config.get("audio") {
-        if let Some(v) = audio.get("device_id").and_then(|v| v.as_str()) {
-            s.config.audio.device_id = v.to_string();
-        }
-        if let Some(v) = audio.get("enable_sounds").and_then(|v| v.as_bool()) {
-            s.config.audio.enable_sounds = v;
-        }
-    }
-    if let Some(model) = config.get("model") {
-        if let Some(v) = model.get("active_model_id").and_then(|v| v.as_str()) {
-            s.config.model.active_model_id = v.to_string();
-        }
-        if let Some(v) = model.get("device").and_then(|v| v.as_str()) {
-            s.config.model.device = v.to_string();
-        }
-    }
-    if let Some(ui) = config.get("ui") {
-        if let Some(v) = ui.get("theme").and_then(|v| v.as_str()) {
-            s.config.ui.theme = v.to_string();
-        }
-        if let Some(v) = ui.get("language").and_then(|v| v.as_str()) {
-            s.config.ui.language = v.to_string();
-        }
-        if let Some(v) = ui.get("show_floating_indicator").and_then(|v| v.as_bool()) {
-            s.config.ui.show_floating_indicator = v;
-        }
-    }
-    let path = s.config_path.clone();
-    save_config(&path, &s.config)
+    let mut merged = serde_json::to_value(&s.config).map_err(|e| e.to_string())?;
+    let mut patch = config;
+    convert_keys_camel_to_snake(&mut patch);
+    deep_merge(&mut merged, patch);
+    let new_config: AppConfig = serde_json::from_value(merged).map_err(|e| e.to_string())?;
+    s.config = new_config;
+    vtl_core::config::save(&s.config).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -461,16 +392,16 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
-            let dir = data_dir();
+            let config = vtl_core::config::load().unwrap_or_default();
+            let dir = dirs::config_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("VoiceTypeless");
             std::fs::create_dir_all(&dir).ok();
-            let config_path = dir.join("config.json");
             let history_path = dir.join("history.json");
-            let config = load_config(&config_path);
             let history = load_history(&history_path);
             app.manage(Mutex::new(AppState {
                 config,
                 history,
-                config_path,
                 history_path,
             }));
 
