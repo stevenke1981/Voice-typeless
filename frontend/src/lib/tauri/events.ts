@@ -83,14 +83,8 @@ export async function setupEventListeners(): Promise<void> {
       appState.status = 'idle';
       appState.currentText = e.payload.text;
 
-      // Auto-paste recognized text (always enabled for MVP)
-      if (e.payload.text && e.payload.text.trim().length > 0) {
-        import('$lib/tauri/commands').then(({ pasteText }) => {
-          pasteText(e.payload.text).catch((err) => {
-            console.warn('[auto-paste] failed:', err);
-          });
-        });
-      }
+      // Auto-paste is handled by the Rust backend in stop_recording.
+      // The frontend only updates UI state.
     }),
   );
 
