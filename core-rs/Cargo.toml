@@ -11,6 +11,7 @@ thiserror = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 cpal = "0.15"
 sherpa-onnx = "1.13.2"
+whisper-rs = "0.16"
 
 [target.'cfg(not(windows))'.dependencies]
 arboard = "3"
