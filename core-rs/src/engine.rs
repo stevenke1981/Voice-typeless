@@ -340,7 +340,8 @@ impl Engine for SenseVoiceEngine {
             }]
         };
 
-        // Confidence: placeholder until sherpa-onnx exposes it via Rust API
+        // sherpa-onnx Rust API does not expose per-frame confidence scores.
+        // Returns 1.0 (full confidence) as a placeholder. Revisit when upstream adds this.
         let confidence = if cleaned_text.is_empty() { 0.0 } else { 1.0 };
 
         // Determine displayed language: detected tag wins, else configured
@@ -420,10 +421,18 @@ fn clean_sensevoice_text(text: &str) -> (String, String) {
 /// Probe the system for the best available compute device.
 ///
 /// Port of Go `ProbeDevice()` from `core/engine/device.go`.
-/// Currently a stub that always returns `DeviceType::Cpu`.
-/// TODO: check DirectML / CUDA availability.
+/// Uses DirectML on Windows, CPU fallback elsewhere.
 pub fn probe_device() -> DeviceType {
-    DeviceType::Cpu
+    #[cfg(target_os = "windows")]
+    {
+        // For Windows, use DirectML by default (best GPU acceleration for sherpa-onnx)
+        DeviceType::DirectML
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // macOS/Linux fallback to CPU
+        DeviceType::Cpu
+    }
 }
 
 /// Create a new engine for the given model type.
@@ -543,7 +552,10 @@ mod tests {
     }
 
     #[test]
-    fn test_probe_device_returns_cpu_stub() {
+    fn test_probe_device_returns_platform_appropriate() {
+        #[cfg(target_os = "windows")]
+        assert_eq!(probe_device(), DeviceType::DirectML);
+        #[cfg(not(target_os = "windows"))]
         assert_eq!(probe_device(), DeviceType::Cpu);
     }
 
@@ -574,6 +586,9 @@ mod tests {
         let result = engine.load_model(cfg);
         assert!(result.is_err());
         // Config should have been resolved before the attempt
+        #[cfg(target_os = "windows")]
+        assert_eq!(engine.cfg.device, DeviceType::DirectML);
+        #[cfg(not(target_os = "windows"))]
         assert_eq!(engine.cfg.device, DeviceType::Cpu);
         assert!(engine.cfg.num_threads > 0);
     }

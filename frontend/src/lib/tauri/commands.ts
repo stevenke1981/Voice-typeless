@@ -12,6 +12,9 @@ export interface RecognitionResult {
 export interface DeviceInfo {
   id: string;
   name: string;
+  is_default: boolean;
+  channels: number;
+  sample_rates: number[];
 }
 
 export interface HistoryItem {
@@ -55,6 +58,14 @@ export const cancelRecording = () =>
 
 export const getDevices = () =>
   invoke<DeviceInfo[]>("get_devices");
+
+/**
+ * Paste text by writing to clipboard and simulating keyboard paste (Ctrl+V / Cmd+V).
+ * Falls back gracefully if paste simulation is not available on the current platform.
+ */
+export async function pasteText(text: string): Promise<void> {
+    await invoke('paste_text', { text });
+}
 
 export const setDevice = (deviceId: string) =>
   invoke<void>("set_device", { deviceId });

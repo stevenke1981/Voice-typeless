@@ -1,4 +1,5 @@
 //! Integration tests for SenseVoice ASR engine.
+#![allow(unused_crate_dependencies)]
 //!
 //! These tests load the real ONNX model from disk and run recognition
 //! on the bundled test WAV files. They serve as the primary smoke-test

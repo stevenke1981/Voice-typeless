@@ -6,7 +6,10 @@
     "moduleResolution": "Bundler",
     "strict": true,
     "isolatedModules": true,
-    "ignoreDeprecations": "5.0"
+    "ignoreDeprecations": "5.0",
+    "paths": {
+      "$lib/*": ["./src/lib/*"]
+    }
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.svelte"],
   "exclude": ["node_modules"]

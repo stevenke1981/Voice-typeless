@@ -165,7 +165,12 @@ fn start_recording(
     // Ignore AlreadyRecording — treat as a no-op restart
     match s.recorder.start(cfg) {
         Err(AudioError::AlreadyRecording) => {}
-        Err(e) => return Err(e.to_string()),
+        Err(e) => {
+            app.emit("recognition-error", serde_json::json!({
+                "message": format!("Recording failed: {}", e),
+            })).ok();
+            return Err(e.to_string());
+        }
         Ok(_) => {}
     }
     // Play start tone (no-op if sounds disabled via set_enabled)
@@ -234,6 +239,16 @@ fn stop_recording(
         "confidence": confidence,
         "duration_ms": duration_ms,
     })).map_err(|e| e.to_string())?;
+
+    // Auto-paste recognized text into the active application.
+    // This is a background best-effort operation — failures are logged but
+    // never propagated, so the front-end still receives the result payload.
+    if !text.is_empty() {
+        if let Err(e) = do_paste(&text) {
+            println!("auto-paste: {}", e);
+        }
+    }
+
     Ok(serde_json::json!({
         "text": text, "language": language, "confidence": confidence, "duration_ms": duration_ms
     }))
@@ -352,6 +367,24 @@ fn get_config(state: State<'_, Mutex<AppState>>) -> Result<AppConfig, String> {
 }
 
 #[tauri::command]
+fn set_device(state: State<'_, Mutex<AppState>>, device: String) -> Result<(), String> {
+    let mut s = state.lock().map_err(|e| e.to_string())?;
+    s.config.model.device = device;
+    vtl_core::config::save(&s.config).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn run_demo(app: tauri::AppHandle) -> Result<(), String> {
+    app.emit("recognition-result", serde_json::json!({
+        "text": "這是一個語音辨識示範結果。",
+        "language": "zh",
+        "confidence": 0.95,
+        "duration_ms": 1500,
+    })).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 fn set_config(
     app: tauri::AppHandle,
     state: State<'_, Mutex<AppState>>,
@@ -445,9 +478,11 @@ fn set_autostart_enabled(enable: bool) -> Result<(), String> {
     }
 }
 
-#[tauri::command]
-fn paste_text(text: String) -> Result<(), String> {
-    write_clipboard(&text).map_err(|e| format!("clipboard write failed: {}", e))?;
+/// Core paste helper: write text to clipboard then simulate paste keystroke (Ctrl+V / Cmd+V).
+///
+/// Uses Control on Windows/Linux, Meta (Cmd) on macOS.
+fn do_paste(text: &str) -> Result<(), String> {
+    write_clipboard(text).map_err(|e| format!("clipboard write failed: {}", e))?;
 
     // Brief wait for clipboard to settle before pasting
     std::thread::sleep(std::time::Duration::from_millis(50));
@@ -455,20 +490,31 @@ fn paste_text(text: String) -> Result<(), String> {
     let mut enigo = enigo::Enigo::new(&enigo::Settings::default())
         .map_err(|e| format!("enigo init failed: {}", e))?;
 
-    // Ctrl down
+    let modifier = if cfg!(target_os = "macos") {
+        enigo::Key::Meta
+    } else {
+        enigo::Key::Control
+    };
+
+    // Modifier down
     enigo
-        .key(enigo::Key::Control, enigo::Direction::Press)
-        .map_err(|e| format!("ctrl press failed: {}", e))?;
+        .key(modifier, enigo::Direction::Press)
+        .map_err(|e| format!("modifier press failed: {}", e))?;
     // V down + up (click)
     enigo
         .key(enigo::Key::Unicode('v'), enigo::Direction::Click)
         .map_err(|e| format!("v click failed: {}", e))?;
-    // Ctrl up
+    // Modifier up
     enigo
-        .key(enigo::Key::Control, enigo::Direction::Release)
-        .map_err(|e| format!("ctrl release failed: {}", e))?;
+        .key(modifier, enigo::Direction::Release)
+        .map_err(|e| format!("modifier release failed: {}", e))?;
 
     Ok(())
+}
+
+#[tauri::command]
+fn paste_text(text: String) -> Result<(), String> {
+    do_paste(&text)
 }
 
 // ── Engine loading ──────────────────────────────────────────────────────────────
@@ -682,6 +728,8 @@ pub fn run() {
             stop_recording,
             cancel_recording,
             paste_text,
+            set_device,
+            run_demo,
             get_devices,
             get_model_list,
             set_active_model,

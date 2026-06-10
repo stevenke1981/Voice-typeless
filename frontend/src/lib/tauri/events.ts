@@ -25,6 +25,7 @@ export interface RecognitionResultPayload {
   text: string;
   language: string;
   confidence: number;
+  duration_ms: number;
   segments?: Array<{ text: string; start_ms: number; end_ms: number }>;
 }
 
@@ -81,6 +82,15 @@ export async function setupEventListeners(): Promise<void> {
     await listen<RecognitionResultPayload>('recognition-result', (e) => {
       appState.status = 'idle';
       appState.currentText = e.payload.text;
+
+      // Auto-paste recognized text (always enabled for MVP)
+      if (e.payload.text && e.payload.text.trim().length > 0) {
+        import('$lib/tauri/commands').then(({ pasteText }) => {
+          pasteText(e.payload.text).catch((err) => {
+            console.warn('[auto-paste] failed:', err);
+          });
+        });
+      }
     }),
   );
 

@@ -214,15 +214,20 @@ mod clipboard_sys {
 #[cfg(not(windows))]
 mod clipboard_sys {
     use super::PasteError;
+    use arboard::Clipboard;
 
-    /// No-op read stub for non-Windows platforms.
     pub fn read_text() -> Result<String, PasteError> {
-        Ok(String::new())
+        let mut clip = Clipboard::new()
+            .map_err(|e| PasteError::ClipboardError(format!("arboard init: {}", e)))?;
+        clip.get_text()
+            .map_err(|e| PasteError::ClipboardError(format!("arboard read: {}", e)))
     }
 
-    /// No-op write stub for non-Windows platforms.
-    pub fn write_text(_text: &str) -> Result<(), PasteError> {
-        Ok(())
+    pub fn write_text(text: &str) -> Result<(), PasteError> {
+        let mut clip = Clipboard::new()
+            .map_err(|e| PasteError::ClipboardError(format!("arboard init: {}", e)))?;
+        clip.set_text(text)
+            .map_err(|e| PasteError::ClipboardError(format!("arboard write: {}", e)))
     }
 }
 
@@ -234,6 +239,22 @@ pub fn read_clipboard() -> Result<String, PasteError> {
 /// Writes text content to the system clipboard.
 pub fn write_clipboard(text: &str) -> Result<(), PasteError> {
     with_clipboard_lock(|| clipboard_sys::write_text(text))
+}
+
+/// Send Ctrl+V (or Cmd+V on macOS) keystrokes to paste from clipboard.
+///
+/// Used for applications that do not react to clipboard changes alone.
+#[cfg(windows)]
+pub fn send_paste_keys() -> Result<(), PasteError> {
+    // TODO: implement SendInput / keybd_event simulation
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub fn send_paste_keys() -> Result<(), PasteError> {
+    Err(PasteError::PasteFailed(
+        "keyboard paste requires platform-specific implementation; use Tauri-enigo layer".into()
+    ))
 }
 
 // ---------------------------------------------------------------------------
