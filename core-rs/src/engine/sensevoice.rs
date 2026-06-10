@@ -131,12 +131,17 @@ impl Engine for SenseVoiceEngine {
             .as_ref()
             .ok_or(EngineError::ModelNotLoaded)?;
 
-        // sherpa-onnx requires 16 kHz input
-        let sr = sample_rate as i32;
+        // sherpa-onnx requires 16 kHz mono input — resample if needed
+        const TARGET_RATE: u32 = 16000;
+        let (waveform, used_rate) = if sample_rate != TARGET_RATE {
+            (resample_linear(audio, sample_rate, TARGET_RATE), TARGET_RATE)
+        } else {
+            (audio.to_vec(), sample_rate)
+        };
 
         // Create an offline stream, feed audio, decode
         let stream = recognizer.create_stream();
-        stream.accept_waveform(sr, audio);
+        stream.accept_waveform(used_rate as i32, &waveform);
         recognizer.decode(&stream);
 
         let raw_result = stream
@@ -239,6 +244,29 @@ pub fn clean_sensevoice_text(text: &str) -> (String, String) {
     }
 
     (cleaned.trim().to_string(), detected.to_string())
+}
+
+/// Linearly resample audio from `src_rate` to `dst_rate`.
+///
+/// Simple linear interpolation — sufficient for speech resampling between
+/// common rates (48 kHz → 16 kHz, 44.1 kHz → 16 kHz, etc.).
+#[cfg(feature = "engine-sensevoice")]
+fn resample_linear(audio: &[f32], src_rate: u32, dst_rate: u32) -> Vec<f32> {
+    if src_rate == dst_rate || audio.is_empty() {
+        return audio.to_vec();
+    }
+    let ratio = src_rate as f64 / dst_rate as f64;
+    let out_len = (audio.len() as f64 / ratio).ceil() as usize;
+    let mut out = Vec::with_capacity(out_len);
+    for i in 0..out_len {
+        let src_pos = i as f64 * ratio;
+        let src_idx = src_pos as usize;
+        let frac = src_pos - src_idx as f64;
+        let a = audio[src_idx.min(audio.len() - 1)];
+        let b = audio[(src_idx + 1).min(audio.len() - 1)];
+        out.push((a as f64 + (b as f64 - a as f64) * frac) as f32);
+    }
+    out
 }
 
 // ── Tests ──
