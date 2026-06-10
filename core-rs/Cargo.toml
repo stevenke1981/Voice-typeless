@@ -3,6 +3,11 @@ name = "vtl-core"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["engine-sensevoice"]
+engine-sensevoice = ["dep:sherpa-onnx"]
+engine-whisper-cpp = ["dep:whisper-rs"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -10,8 +15,8 @@ dirs = "5"
 thiserror = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 cpal = "0.15"
-sherpa-onnx = "1.13.2"
-whisper-rs = "0.16"
+sherpa-onnx = { version = "1.13.2", optional = true }
+whisper-rs = { version = "0.16", optional = true }
 
 [target.'cfg(not(windows))'.dependencies]
 arboard = "3"

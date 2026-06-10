@@ -18,7 +18,7 @@ enigo = "0.3"
 log = "0.4"
 
 # Core logic library — Rust rewrite of Go core/
-vtl-core = { path = "../core-rs" }
+vtl-core = { path = "../core-rs", features = ["engine-sensevoice"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

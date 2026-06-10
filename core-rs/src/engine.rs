@@ -1,14 +1,17 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
+#[cfg(any(feature = "engine-sensevoice", feature = "engine-whisper-cpp"))]
 use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::time::Duration;
 use thiserror::Error;
 
+#[cfg(feature = "engine-sensevoice")]
 use sherpa_onnx::{
     OfflineModelConfig, OfflineRecognizer, OfflineRecognizerConfig,
     OfflineSenseVoiceModelConfig,
 };
+#[cfg(feature = "engine-whisper-cpp")]
 use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters,
 };
@@ -208,12 +211,14 @@ pub trait Engine: Send {
 /// SenseVoice engine implementation backed by sherpa-onnx `OfflineRecognizer`.
 ///
 /// Port of Go `senseVoiceEngine` from `core/engine/sensevoice.go`.
+#[cfg(feature = "engine-sensevoice")]
 pub struct SenseVoiceEngine {
     cfg: ModelConfig,
     recognizer: Option<OfflineRecognizer>,
 }
 
 // Manual Debug impl: OfflineRecognizer does not impl Debug.
+#[cfg(feature = "engine-sensevoice")]
 impl fmt::Debug for SenseVoiceEngine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SenseVoiceEngine")
@@ -225,8 +230,10 @@ impl fmt::Debug for SenseVoiceEngine {
 
 // Safety: OfflineRecognizer wraps a raw C pointer (ONNX Runtime session).
 // It is Send (ownership moves between threads) but not Sync.
+#[cfg(feature = "engine-sensevoice")]
 unsafe impl Send for SenseVoiceEngine {}
 
+#[cfg(feature = "engine-sensevoice")]
 impl SenseVoiceEngine {
     /// Create a new uninitialized SenseVoice engine (no model loaded).
     pub fn new() -> Self {
@@ -249,12 +256,14 @@ impl SenseVoiceEngine {
     }
 }
 
+#[cfg(feature = "engine-sensevoice")]
 impl Default for SenseVoiceEngine {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(feature = "engine-sensevoice")]
 impl Engine for SenseVoiceEngine {
     fn load_model(&mut self, mut cfg: ModelConfig) -> Result<(), EngineError> {
         // Resolve Auto device
@@ -408,12 +417,14 @@ impl Engine for SenseVoiceEngine {
 /// Whisper.cpp engine implementation backed by `whisper-rs`.
 ///
 /// Loads GGML/GGUF format Whisper models via the whisper.cpp C library.
+#[cfg(feature = "engine-whisper-cpp")]
 pub struct WhisperCppEngine {
     cfg: ModelConfig,
     ctx: Option<WhisperContext>,
 }
 
 // Manual Debug impl: WhisperContext does not impl Debug.
+#[cfg(feature = "engine-whisper-cpp")]
 impl fmt::Debug for WhisperCppEngine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("WhisperCppEngine")
@@ -425,8 +436,10 @@ impl fmt::Debug for WhisperCppEngine {
 
 // Safety: WhisperContext wraps a raw C pointer (whisper_context*).
 // It is Send (ownership moves between threads) but not Sync.
+#[cfg(feature = "engine-whisper-cpp")]
 unsafe impl Send for WhisperCppEngine {}
 
+#[cfg(feature = "engine-whisper-cpp")]
 impl WhisperCppEngine {
     /// Create a new uninitialized Whisper.cpp engine (no model loaded).
     pub fn new() -> Self {
@@ -449,12 +462,14 @@ impl WhisperCppEngine {
     }
 }
 
+#[cfg(feature = "engine-whisper-cpp")]
 impl Default for WhisperCppEngine {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(feature = "engine-whisper-cpp")]
 impl Engine for WhisperCppEngine {
     fn load_model(&mut self, mut cfg: ModelConfig) -> Result<(), EngineError> {
         // Resolve Auto device (default to CPU for whisper.cpp)
@@ -613,6 +628,7 @@ impl Engine for WhisperCppEngine {
 ///
 /// SenseVoice prefixes output with tags like `<|zh|>`, `<|en|>`, `<|ja|>`,
 /// `<|ko|>`, `<|yue|>`. Returns `"auto"` as detected language if no tag found.
+#[cfg(feature = "engine-sensevoice")]
 fn clean_sensevoice_text(text: &str) -> (String, String) {
     let mut detected = "auto";
     let mut cleaned = text.to_string();
@@ -663,7 +679,9 @@ pub fn probe_device() -> DeviceType {
 /// Port of Go `New()` from `core/engine/engine.go`.
 pub fn new_engine(model_type: ModelType) -> Result<Box<dyn Engine>, EngineError> {
     match model_type {
+        #[cfg(feature = "engine-sensevoice")]
         ModelType::SenseVoice => Ok(Box::new(SenseVoiceEngine::new())),
+        #[cfg(feature = "engine-whisper-cpp")]
         ModelType::WhisperCpp => Ok(Box::new(WhisperCppEngine::new())),
         _ => Err(EngineError::UnknownModelType(model_type.to_string())),
     }
@@ -746,6 +764,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "engine-sensevoice")]
     fn test_new_sensevoice_engine() {
         let engine = new_engine(ModelType::SenseVoice).unwrap();
         let info = engine.model_info();
@@ -754,6 +773,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "engine-sensevoice")]
     fn test_recognize_before_load_errors() {
         let mut engine = SenseVoiceEngine::new();
         let result = engine.recognize(&[], 16000);
@@ -761,6 +781,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "engine-sensevoice")]
     fn test_sensevoice_model_info() {
         let engine = SenseVoiceEngine::new();
         let info = engine.model_info();
@@ -774,6 +795,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "engine-sensevoice")]
     fn test_close_resets_recognizer() {
         let mut engine = SenseVoiceEngine::new();
         assert!(!engine.is_loaded());
@@ -790,8 +812,14 @@ mod tests {
     }
 
     #[test]
-    fn test_new_engine_known_types() {
+    #[cfg(feature = "engine-sensevoice")]
+    fn test_new_engine_sensevoice_type() {
         assert!(new_engine(ModelType::SenseVoice).is_ok());
+    }
+
+    #[test]
+    #[cfg(feature = "engine-whisper-cpp")]
+    fn test_new_engine_whispercpp_type() {
         assert!(new_engine(ModelType::WhisperCpp).is_ok());
     }
 
@@ -808,6 +836,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "engine-sensevoice")]
     fn test_load_model_auto_device() {
         let mut engine = SenseVoiceEngine::new();
         let cfg = ModelConfig {
@@ -830,6 +859,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "engine-sensevoice")]
     fn test_load_model_nonexistent_path_errors() {
         let mut engine = SenseVoiceEngine::new();
         let cfg = ModelConfig {
@@ -845,6 +875,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "engine-sensevoice")]
     fn test_clean_sensevoice_text_strips_tags() {
         let (text, lang) = clean_sensevoice_text("<|zh|>你好世界");
         assert_eq!(text, "你好世界");
@@ -852,6 +883,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "engine-sensevoice")]
     fn test_clean_sensevoice_text_no_tags() {
         let (text, lang) = clean_sensevoice_text("hello world");
         assert_eq!(text, "hello world");
@@ -859,6 +891,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "engine-sensevoice")]
     fn test_clean_sensevoice_text_multiple_tags() {
         let (text, lang) =
             clean_sensevoice_text("<|sot|><|zh|><|text_only|>今天天气不错");
@@ -869,6 +902,7 @@ mod tests {
     // ── WhisperCppEngine tests ──
 
     #[test]
+    #[cfg(feature = "engine-whisper-cpp")]
     fn test_new_whispercpp_engine() {
         let engine = new_engine(ModelType::WhisperCpp).unwrap();
         let info = engine.model_info();
@@ -877,6 +911,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "engine-whisper-cpp")]
     fn test_whispercpp_recognize_before_load_errors() {
         let mut engine = WhisperCppEngine::new();
         let result = engine.recognize(&[], 16000);
@@ -884,6 +919,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "engine-whisper-cpp")]
     fn test_whispercpp_model_info() {
         let engine = WhisperCppEngine::new();
         let info = engine.model_info();
@@ -894,6 +930,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "engine-whisper-cpp")]
     fn test_whispercpp_close_resets_model() {
         let mut engine = WhisperCppEngine::new();
         assert!(!engine.is_loaded());
@@ -902,6 +939,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "engine-whisper-cpp")]
     fn test_whispercpp_load_model_nonexistent_path_errors() {
         let mut engine = WhisperCppEngine::new();
         let cfg = ModelConfig {
