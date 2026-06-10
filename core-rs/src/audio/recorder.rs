@@ -43,6 +43,9 @@ pub struct Recorder {
     stream: Mutex<Option<cpal::Stream>>,
     recording: AtomicBool,
     started_at: Mutex<Option<SystemTime>>,
+    /// Actual sample rate reported by the audio device when `start()` was
+    /// called.  Returned by `drain()` so the ASR engine knows the true rate.
+    sample_rate: Mutex<u32>,
 }
 
 // SAFETY: cpal::Stream is !Send on Windows WASAPI due to PhantomData<*mut ()>,
@@ -61,6 +64,7 @@ impl Recorder {
             stream: Mutex::new(None),
             recording: AtomicBool::new(false),
             started_at: Mutex::new(None),
+            sample_rate: Mutex::new(SAMPLE_RATE),
         }
     }
 
@@ -79,58 +83,139 @@ impl Recorder {
     }
 
     /// Build a cpal input stream, dispatching on the device's sample format.
+    ///
+    /// The ASR engine expects 16 kHz mono audio, so we first attempt to
+    /// configure the device at 16 kHz.  If the device does not support that
+    /// rate the stream is built at the device's preferred rate instead and the
+    /// actual rate is returned so the caller can decide whether to resample.
     fn build_input_stream(
         device: &cpal::Device,
         shared: &Arc<Mutex<SharedState>>,
     ) -> Result<(cpal::Stream, u32), AudioError> {
-        let config = device
+        let default_cfg = device
             .default_input_config()
             .map_err(|e| AudioError::DeviceError(e.to_string()))?;
-        let sample_format = config.sample_format();
-        let sample_rate = config.sample_rate().0;
-        let stream_config: cpal::StreamConfig = config.into();
-        let shared = Arc::clone(shared);
+        let sample_format = default_cfg.sample_format();
 
-        let stream = match sample_format {
-            cpal::SampleFormat::F32 => device.build_input_stream(
-                &stream_config,
-                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    if let Ok(mut state) = shared.try_lock() {
-                        state.push_samples(data, sample_rate);
+        // Try 16 kHz first (the engine's native rate); fall back to any rate.
+        let (stream, sample_rate) = {
+            let target_rate = cpal::SampleRate(SAMPLE_RATE);
+            let stream_cfg = cpal::StreamConfig {
+                channels: 1,
+                sample_rate: target_rate,
+                buffer_size: cpal::BufferSize::Default,
+            };
+            let result = match sample_format {
+                cpal::SampleFormat::F32 => device.build_input_stream(
+                    &stream_cfg,
+                    {
+                        let shared = Arc::clone(shared);
+                        move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                            if let Ok(mut state) = shared.try_lock() {
+                                state.push_samples(data, target_rate.0);
+                            }
+                        }
+                    },
+                    |err| eprintln!("[vtl] audio input error: {err}"),
+                    None,
+                ),
+                cpal::SampleFormat::I16 => device.build_input_stream(
+                    &stream_cfg,
+                    {
+                        let shared = Arc::clone(shared);
+                        move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                            if let Ok(mut state) = shared.try_lock() {
+                                let converted: Vec<f32> =
+                                    data.iter().map(|&s| s as f32 / 32768.0).collect();
+                                state.push_samples(&converted, target_rate.0);
+                            }
+                        }
+                    },
+                    |err| eprintln!("[vtl] audio input error: {err}"),
+                    None,
+                ),
+                cpal::SampleFormat::U16 => device.build_input_stream(
+                    &stream_cfg,
+                    {
+                        let shared = Arc::clone(shared);
+                        move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                            if let Ok(mut state) = shared.try_lock() {
+                                let converted: Vec<f32> = data
+                                    .iter()
+                                    .map(|&s| (s as f32 / 32768.0) - 1.0)
+                                    .collect();
+                                state.push_samples(&converted, target_rate.0);
+                            }
+                        }
+                    },
+                    |err| eprintln!("[vtl] audio input error: {err}"),
+                    None,
+                ),
+                _ => return Err(AudioError::FormatNotSupported),
+            };
+            match result {
+                Ok(stream) => (stream, target_rate.0),
+                Err(_) => {
+                    // 16 kHz not supported — fall back to device default config.
+                    let fallback: cpal::StreamConfig = default_cfg.clone().into();
+                    let fallback_rate = fallback.sample_rate.0;
+                    println!(
+                        "[vtl] 16 kHz not supported on this device, falling back to {} Hz",
+                        fallback_rate
+                    );
+                    let fallback_stream = match sample_format {
+                        cpal::SampleFormat::F32 => device.build_input_stream(
+                            &fallback,
+                            {
+                                let shared = Arc::clone(shared);
+                                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                                    if let Ok(mut state) = shared.try_lock() {
+                                        state.push_samples(data, fallback_rate);
+                                    }
+                                }
+                            },
+                            |err| eprintln!("[vtl] audio input error: {err}"),
+                            None,
+                        ),
+                        cpal::SampleFormat::I16 => device.build_input_stream(
+                            &fallback,
+                            {
+                                let shared = Arc::clone(shared);
+                                move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                                    if let Ok(mut state) = shared.try_lock() {
+                                        let converted: Vec<f32> =
+                                            data.iter().map(|&s| s as f32 / 32768.0).collect();
+                                        state.push_samples(&converted, fallback_rate);
+                                    }
+                                }
+                            },
+                            |err| eprintln!("[vtl] audio input error: {err}"),
+                            None,
+                        ),
+                        cpal::SampleFormat::U16 => device.build_input_stream(
+                            &fallback,
+                            {
+                                let shared = Arc::clone(shared);
+                                move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                                    if let Ok(mut state) = shared.try_lock() {
+                                        let converted: Vec<f32> = data
+                                            .iter()
+                                            .map(|&s| (s as f32 / 32768.0) - 1.0)
+                                            .collect();
+                                        state.push_samples(&converted, fallback_rate);
+                                    }
+                                }
+                            },
+                            |err| eprintln!("[vtl] audio input error: {err}"),
+                            None,
+                        ),
+                        _ => return Err(AudioError::FormatNotSupported),
                     }
-                },
-                |err| eprintln!("[vtl] audio input error: {err}"),
-                None,
-            ),
-            cpal::SampleFormat::I16 => device.build_input_stream(
-                &stream_config,
-                move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                    if let Ok(mut state) = shared.try_lock() {
-                        let converted: Vec<f32> =
-                            data.iter().map(|&s| s as f32 / 32768.0).collect();
-                        state.push_samples(&converted, sample_rate);
-                    }
-                },
-                |err| eprintln!("[vtl] audio input error: {err}"),
-                None,
-            ),
-            cpal::SampleFormat::U16 => device.build_input_stream(
-                &stream_config,
-                move |data: &[u16], _: &cpal::InputCallbackInfo| {
-                    if let Ok(mut state) = shared.try_lock() {
-                        let converted: Vec<f32> = data
-                            .iter()
-                            .map(|&s| (s as f32 / 32768.0) - 1.0)
-                            .collect();
-                        state.push_samples(&converted, sample_rate);
-                    }
-                },
-                |err| eprintln!("[vtl] audio input error: {err}"),
-                None,
-            ),
-            _ => return Err(AudioError::FormatNotSupported),
-        }
-        .map_err(|e| AudioError::DeviceError(e.to_string()))?;
+                    .map_err(|e| AudioError::DeviceError(e.to_string()))?;
+                    (fallback_stream, fallback_rate)
+                }
+            }
+        };
 
         Ok((stream, sample_rate))
     }
@@ -148,7 +233,10 @@ impl AudioRecorder for Recorder {
             return Err(AudioError::AlreadyRecording);
         }
         let device = Self::resolve_device(&cfg.device_id)?;
-        let (stream, _rate) = Self::build_input_stream(&device, &self.shared)?;
+        let (stream, dev_rate) = Self::build_input_stream(&device, &self.shared)?;
+
+        // Track the actual device sample rate so drain() returns it correctly.
+        *self.sample_rate.lock().unwrap() = dev_rate;
 
         // Clear old state before starting fresh.
         {
@@ -189,11 +277,12 @@ impl AudioRecorder for Recorder {
             .unwrap()
             .take()
             .ok_or(AudioError::NotRecording)?;
+        let actual_rate = *self.sample_rate.lock().unwrap();
         let mut state = self.shared.lock().unwrap();
         let samples = std::mem::take(&mut state.buffer);
         Ok(AudioChunk {
             samples,
-            sample_rate: SAMPLE_RATE,
+            sample_rate: actual_rate,
             captured_at: started_at,
         })
     }

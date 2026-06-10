@@ -156,8 +156,9 @@ pub fn stop_recording(
         None => (String::new(), "en".into(), 0.0),
     };
     println!(
-        "stop_recording: samples={}, duration={}ms, text_len={}, confidence={:.2}",
+        "stop_recording: samples={}, rate={}Hz, duration={}ms, text_len={}, confidence={:.2}",
         chunk.samples.len(),
+        chunk.sample_rate,
         duration_ms,
         text.len(),
         confidence,
