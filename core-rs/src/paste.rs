@@ -1,9 +1,10 @@
-//! Clipboard paste operations — stub implementation.
+//! Clipboard paste operations — Win32 implementation.
 //!
 //! This module mirrors `core/paste/` from the Go implementation and
 //! provides the paste-method abstraction, a clipboard guard for
 //! save/restore semantics, and platform-specific clipboard I/O
-//! (all stubs pending real Win32 API integration).
+//! via Win32 `OpenClipboard` / `SetClipboardData` (Windows)
+//! or no-op stubs (other platforms).
 
 use std::sync::Mutex;
 
@@ -89,27 +90,137 @@ pub trait ClipboardGuard {
 }
 
 // ---------------------------------------------------------------------------
-// Platform clipboard stubs
+// Platform clipboard — Win32 / stub
 // ---------------------------------------------------------------------------
 
+#[cfg(windows)]
+mod clipboard_sys {
+    use super::PasteError;
+    use std::ffi::c_void;
+    use std::ptr;
+
+    type HANDLE = *mut c_void;
+    type BOOL = i32;
+    type UINT = u32;
+
+    const CF_UNICODETEXT: UINT = 13;
+    const GMEM_MOVEABLE: UINT = 0x0002;
+    const GMEM_ZEROINIT: UINT = 0x0040;
+
+    extern "system" {
+        fn OpenClipboard(hWnd: HANDLE) -> BOOL;
+        fn CloseClipboard() -> BOOL;
+        fn EmptyClipboard() -> BOOL;
+        fn SetClipboardData(uFormat: UINT, hMem: HANDLE) -> HANDLE;
+        fn GetClipboardData(uFormat: UINT) -> HANDLE;
+        fn GlobalAlloc(uFlags: UINT, dwBytes: usize) -> HANDLE;
+        fn GlobalLock(hMem: HANDLE) -> *mut c_void;
+        fn GlobalUnlock(hMem: HANDLE) -> BOOL;
+        fn GlobalFree(hMem: HANDLE) -> HANDLE;
+    }
+
+    /// Read Unicode text from the system clipboard via Win32 API.
+    pub fn read_text() -> Result<String, PasteError> {
+        unsafe {
+            if OpenClipboard(ptr::null_mut()) == 0 {
+                return Err(PasteError::ClipboardError(
+                    "OpenClipboard failed".into(),
+                ));
+            }
+
+            let handle = GetClipboardData(CF_UNICODETEXT);
+            if handle.is_null() {
+                CloseClipboard();
+                return Ok(String::new());
+            }
+
+            let ptr = GlobalLock(handle) as *const u16;
+            if ptr.is_null() {
+                CloseClipboard();
+                return Err(PasteError::ClipboardError(
+                    "GlobalLock failed".into(),
+                ));
+            }
+
+            // Find null-terminator position
+            let mut len = 0usize;
+            while *ptr.add(len) != 0 {
+                len += 1;
+            }
+
+            let result = String::from_utf16_lossy(std::slice::from_raw_parts(ptr, len));
+            GlobalUnlock(handle);
+            CloseClipboard();
+            Ok(result)
+        }
+    }
+
+    /// Write Unicode text to the system clipboard via Win32 API.
+    pub fn write_text(text: &str) -> Result<(), PasteError> {
+        unsafe {
+            let utf16: Vec<u16> =
+                text.encode_utf16().chain(std::iter::once(0)).collect();
+            let byte_size = utf16.len() * 2; // u16 = 2 bytes
+
+            let hmem = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, byte_size);
+            if hmem.is_null() {
+                return Err(PasteError::ClipboardError(
+                    "GlobalAlloc failed".into(),
+                ));
+            }
+
+            let ptr = GlobalLock(hmem) as *mut u16;
+            if ptr.is_null() {
+                GlobalFree(hmem);
+                return Err(PasteError::ClipboardError(
+                    "GlobalLock failed".into(),
+                ));
+            }
+            ptr::copy_nonoverlapping(utf16.as_ptr(), ptr, utf16.len());
+            GlobalUnlock(hmem);
+
+            if OpenClipboard(ptr::null_mut()) == 0 {
+                GlobalFree(hmem);
+                return Err(PasteError::ClipboardError(
+                    "OpenClipboard failed".into(),
+                ));
+            }
+            EmptyClipboard();
+            let result = SetClipboardData(CF_UNICODETEXT, hmem);
+            CloseClipboard();
+            if result.is_null() {
+                return Err(PasteError::ClipboardError(
+                    "SetClipboardData failed".into(),
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
+#[cfg(not(windows))]
+mod clipboard_sys {
+    use super::PasteError;
+
+    /// No-op read stub for non-Windows platforms.
+    pub fn read_text() -> Result<String, PasteError> {
+        Ok(String::new())
+    }
+
+    /// No-op write stub for non-Windows platforms.
+    pub fn write_text(_text: &str) -> Result<(), PasteError> {
+        Ok(())
+    }
+}
+
 /// Reads the current text content from the system clipboard.
-///
-/// # Stub
-///
-/// Always returns an empty string. Real implementation will use
-/// Win32 `OpenClipboard` / `GetClipboardData` on Windows.
 pub fn read_clipboard() -> Result<String, PasteError> {
-    Ok(String::new())
+    clipboard_sys::read_text()
 }
 
 /// Writes text content to the system clipboard.
-///
-/// # Stub
-///
-/// No-op. Real implementation will use
-/// Win32 `OpenClipboard` / `SetClipboardData` on Windows.
-pub fn write_clipboard(_text: &str) -> Result<(), PasteError> {
-    Ok(())
+pub fn write_clipboard(text: &str) -> Result<(), PasteError> {
+    clipboard_sys::write_text(text)
 }
 
 // ---------------------------------------------------------------------------
@@ -253,7 +364,8 @@ impl Paster for WindowsPaster {
 
 /// Create a new [`Paster`] with the given configuration.
 ///
-/// Currently returns a [`WindowsPaster`] stub on all platforms.
+/// Returns a [`WindowsPaster`] on all platforms (clipboard I/O is
+/// real Win32 on Windows, no-op elsewhere).
 pub fn new_paster(cfg: PasteConfig) -> impl Paster {
     WindowsPaster::new(cfg)
 }
@@ -288,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    fn test_new_paster_returns_stub() {
+    fn test_new_paster_paste_ok() {
         let paster = new_paster(PasteConfig::default());
         assert!(paster.paste("hello").is_ok());
     }
@@ -306,14 +418,15 @@ mod tests {
     }
 
     #[test]
-    fn test_read_clipboard_stub() {
+    fn test_read_clipboard_ok() {
         let result = read_clipboard();
+        // On Windows this returns the actual clipboard content;
+        // on other platforms it returns empty string. Either way: Ok.
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "");
     }
 
     #[test]
-    fn test_write_clipboard_stub() {
+    fn test_write_clipboard_ok() {
         let result = write_clipboard("test content");
         assert!(result.is_ok());
     }

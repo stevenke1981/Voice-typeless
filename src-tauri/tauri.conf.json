@@ -2,11 +2,11 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Voice-typeless",
   "version": "0.1.0",
-  "identifier": "com.voice-typeless.app",
+  "identifier": "com.voice-typeless.desktop",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "cd frontend && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "cd frontend && npm run build",
     "frontendDist": "../frontend/dist"
   },
   "app": {

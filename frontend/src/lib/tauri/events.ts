@@ -7,6 +7,7 @@
 
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { appState } from '../stores/appState.svelte';
+import { startRecording, stopRecording, cancelRecording } from './commands';
 
 // ─── IPC Event Payload Types (mirrors architecture.md §4.2) ──────────────────
 
@@ -122,6 +123,44 @@ export async function setupEventListeners(): Promise<void> {
   unlisteners.push(
     await listen<VadSilencePayload>('vad-silence-detected', (_e) => {
       // Core will follow up with recording-stopped; nothing extra needed here.
+    }),
+  );
+
+  // ── hotkey-ptt-pressed ─────────────────────────────────────────────────────
+  unlisteners.push(
+    await listen<void>('hotkey-ptt-pressed', () => {
+      if (appState.status === 'idle') {
+        startRecording('push_to_talk').catch(() => {});
+      }
+    }),
+  );
+
+  // ── hotkey-ptt-released ────────────────────────────────────────────────────
+  unlisteners.push(
+    await listen<void>('hotkey-ptt-released', () => {
+      if (appState.status === 'recording') {
+        stopRecording().catch(() => {});
+      }
+    }),
+  );
+
+  // ── hotkey-free-speech (toggle) ────────────────────────────────────────────
+  unlisteners.push(
+    await listen<void>('hotkey-free-speech', () => {
+      if (appState.status === 'idle') {
+        startRecording('free_speech').catch(() => {});
+      } else if (appState.status === 'recording') {
+        stopRecording().catch(() => {});
+      }
+    }),
+  );
+
+  // ── hotkey-cancel ──────────────────────────────────────────────────────────
+  unlisteners.push(
+    await listen<void>('hotkey-cancel', () => {
+      if (appState.status === 'recording' || appState.status === 'processing') {
+        cancelRecording().catch(() => {});
+      }
     }),
   );
 }

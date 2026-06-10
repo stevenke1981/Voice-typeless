@@ -4,6 +4,7 @@
 /core/coverage.out
 
 # Rust / Tauri
+/core-rs/target/
 /src-tauri/target/
 /src-tauri/WixTools/
 
@@ -14,10 +15,9 @@
 /frontend/build/
 
 # Models (large binary files - download separately)
-/models/*.onnx
-/models/*.bin
-/models/*.pt
-/models/!.gitkeep
+/models/**/*.onnx
+/models/**/*.bin
+/models/**/*.pt
 
 # Build output
 /build/dist/

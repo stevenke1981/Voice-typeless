@@ -1,10 +1,16 @@
+use std::str::FromStr;
 use std::sync::Mutex;
+use log::info;
 use std::path::PathBuf;
 use tauri::{Emitter, Manager, State};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
-use vtl_core::audio::{AudioError, AudioPlayer, AudioRecorder, AudioChunk, DeviceEnumerator, Enumerator, Player, Recorder, RecorderConfig};
+use vtl_core::audio::{AudioError, AudioPlayer, AudioChunk, AudioRecorder, DeviceEnumerator, Enumerator, Player, Recorder, RecorderConfig};
 use vtl_core::config::AppConfig;
+use vtl_core::engine::{self as engine_mod, Engine as _, ModelType, DeviceType, SenseVoiceEngine};
 use vtl_core::history::HistoryItem;
+use vtl_core::paste::write_clipboard;
+use enigo::Keyboard as _;
 
 // ── Config helpers ─────────────────────────────────────────────────────────────
 
@@ -123,6 +129,7 @@ struct AppState {
     history_path: PathBuf,
     recorder: Recorder,
     player: Player,
+    engine: Option<SenseVoiceEngine>,
 }
 
 // ── I/O helpers ────────────────────────────────────────────────────────────────
@@ -178,7 +185,7 @@ fn stop_recording(
     app: tauri::AppHandle,
     state: State<'_, Mutex<AppState>>,
 ) -> Result<serde_json::Value, String> {
-    let s = state.lock().map_err(|e| e.to_string())?;
+    let mut s = state.lock().map_err(|e| e.to_string())?;
     // Gracefully handle "not recording" edge case
     let chunk = match s.recorder.stop() {
         Ok(()) => {
@@ -199,7 +206,16 @@ fn stop_recording(
         }
         Err(e) => return Err(e.to_string()),
     };
+    // Run ASR if samples are available and engine is loaded
+    let recognition = (!chunk.samples.is_empty())
+        .then(|| {
+            s.engine.as_mut().and_then(|engine| {
+                engine.recognize(&chunk.samples, chunk.sample_rate).ok()
+            })
+        })
+        .flatten();
     drop(s);
+
     let duration_ms = if chunk.sample_rate > 0 {
         (chunk.samples.len() as u64 * 1000) / chunk.sample_rate as u64
     } else {
@@ -207,15 +223,19 @@ fn stop_recording(
     };
     app.emit("recording-stopped", serde_json::json!({"duration_ms": duration_ms}))
         .map_err(|e| e.to_string())?;
-    // No ASR engine yet — emit empty result for frontend
+
+    let (text, language, confidence) = match recognition {
+        Some(r) => (r.text, r.language, r.confidence),
+        None => (String::new(), "en".into(), 0.0),
+    };
     app.emit("recognition-result", serde_json::json!({
-        "text": "",
-        "language": "en",
-        "confidence": 0.0,
+        "text": text,
+        "language": language,
+        "confidence": confidence,
         "duration_ms": duration_ms,
     })).map_err(|e| e.to_string())?;
     Ok(serde_json::json!({
-        "text": "", "language": "en", "confidence": 0.0, "duration_ms": duration_ms
+        "text": text, "language": language, "confidence": confidence, "duration_ms": duration_ms
     }))
 }
 
@@ -332,15 +352,41 @@ fn get_config(state: State<'_, Mutex<AppState>>) -> Result<AppConfig, String> {
 }
 
 #[tauri::command]
-fn set_config(state: State<'_, Mutex<AppState>>, config: serde_json::Value) -> Result<(), String> {
+fn set_config(
+    app: tauri::AppHandle,
+    state: State<'_, Mutex<AppState>>,
+    config: serde_json::Value,
+) -> Result<(), String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
+    let old_hotkey_cfg = s.config.hotkey.clone();
     let mut merged = serde_json::to_value(&s.config).map_err(|e| e.to_string())?;
     let mut patch = config;
     convert_keys_camel_to_snake(&mut patch);
     deep_merge(&mut merged, patch);
     let new_config: AppConfig = serde_json::from_value(merged).map_err(|e| e.to_string())?;
     s.config = new_config;
-    vtl_core::config::save(&s.config).map_err(|e| e.to_string())
+    vtl_core::config::save(&s.config).map_err(|e| e.to_string())?;
+
+    // Re-register hotkeys if bindings changed
+    let new_hotkey = &s.config.hotkey;
+    if old_hotkey_cfg.push_to_talk != new_hotkey.push_to_talk
+        || old_hotkey_cfg.free_speech != new_hotkey.free_speech
+        || old_hotkey_cfg.cancel != new_hotkey.cancel
+    {
+        for old in [old_hotkey_cfg.push_to_talk.as_str(), old_hotkey_cfg.free_speech.as_str(), old_hotkey_cfg.cancel.as_str()] {
+            if !old.is_empty() {
+                let _ = app.global_shortcut().unregister(old);
+            }
+        }
+        for new in [new_hotkey.push_to_talk.as_str(), new_hotkey.free_speech.as_str(), new_hotkey.cancel.as_str()] {
+            if !new.is_empty() {
+                app.global_shortcut()
+                    .register(new)
+                    .map_err(|e| format!("failed to register hotkey '{}': {}", new, e))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -399,12 +445,153 @@ fn set_autostart_enabled(enable: bool) -> Result<(), String> {
     }
 }
 
+#[tauri::command]
+fn paste_text(text: String) -> Result<(), String> {
+    write_clipboard(&text).map_err(|e| format!("clipboard write failed: {}", e))?;
+
+    // Brief wait for clipboard to settle before pasting
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    let mut enigo = enigo::Enigo::new(&enigo::Settings::default())
+        .map_err(|e| format!("enigo init failed: {}", e))?;
+
+    // Ctrl down
+    enigo
+        .key(enigo::Key::Control, enigo::Direction::Press)
+        .map_err(|e| format!("ctrl press failed: {}", e))?;
+    // V down + up (click)
+    enigo
+        .key(enigo::Key::Unicode('v'), enigo::Direction::Click)
+        .map_err(|e| format!("v click failed: {}", e))?;
+    // Ctrl up
+    enigo
+        .key(enigo::Key::Control, enigo::Direction::Release)
+        .map_err(|e| format!("ctrl release failed: {}", e))?;
+
+    Ok(())
+}
+
+// ── Engine loading ──────────────────────────────────────────────────────────────
+
+fn load_engine(config: &AppConfig) -> Option<SenseVoiceEngine> {
+    let models_dir_str = if config.model.models_dir.is_empty() {
+        let fallback = PathBuf::from("models");
+        if fallback.is_dir() {
+            info!("Using fallback models directory: {:?}", fallback);
+            fallback.to_string_lossy().to_string()
+        } else {
+            info!("Model configuration incomplete: models_dir not set and ./models/ not found");
+            return None;
+        }
+    } else {
+        config.model.models_dir.clone()
+    };
+
+    if config.model.active_model_id.is_empty() {
+        info!("Model configuration incomplete: active_model_id not set");
+        return None;
+    }
+
+    let model_path = format!(
+        "{}/{}/model.int8.onnx",
+        models_dir_str, config.model.active_model_id
+    );
+    let tokens_path = format!(
+        "{}/{}/tokens.txt",
+        models_dir_str, config.model.active_model_id
+    );
+    // If model files don't exist, don't bother attempting to load
+    if !std::path::Path::new(&model_path).exists() {
+        println!("engine: model file not found at '{}'", model_path);
+        return None;
+    }
+    let device = DeviceType::from_str(&config.model.device).unwrap_or(DeviceType::Auto);
+    let language = if config.text.language.is_empty() {
+        "auto".to_string()
+    } else {
+        config.text.language.clone()
+    };
+
+    // Determine ModelType from active_model_id prefix
+    let model_type = match config.model.active_model_id.as_str() {
+        id if id.starts_with("sensevoice") => ModelType::SenseVoice,
+        id if id.starts_with("whisper") => ModelType::WhisperTiny,
+        _ => ModelType::SenseVoice,
+    };
+
+    let engine_cfg = engine_mod::ModelConfig {
+        model_type,
+        model_path,
+        tokens_path,
+        device,
+        language,
+        num_threads: 0, // auto
+    };
+
+    let mut engine = SenseVoiceEngine::new();
+    match engine.load_model(engine_cfg) {
+        Ok(()) => Some(engine),
+        Err(e) => {
+            // Model loading failure is non-fatal; recognition falls back to empty
+            println!("engine: load failed: {}", e);
+            None
+        }
+    }
+}
+
 // ── run() ─────────────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    let accel = shortcut.to_string();
+
+                    // Read config to match accelerator → action
+                    let action = app
+                        .state::<Mutex<AppState>>()
+                        .lock()
+                        .ok()
+                        .map(|s| {
+                            let cfg = &s.config.hotkey;
+                            let lower = accel.to_lowercase();
+                            if lower == cfg.push_to_talk.to_lowercase() {
+                                "ptt"
+                            } else if lower == cfg.free_speech.to_lowercase() {
+                                "free_speech"
+                            } else if lower == cfg.cancel.to_lowercase() {
+                                "cancel"
+                            } else {
+                                ""
+                            }
+                        })
+                        .unwrap_or_default();
+
+                    if action.is_empty() {
+                        return;
+                    }
+
+                    match (action, event.state) {
+                        ("ptt", ShortcutState::Pressed) => {
+                            app.emit("hotkey-ptt-pressed", ()).ok();
+                        }
+                        ("ptt", ShortcutState::Released) => {
+                            app.emit("hotkey-ptt-released", ()).ok();
+                        }
+                        ("free_speech", ShortcutState::Pressed) => {
+                            app.emit("hotkey-free-speech", ()).ok();
+                        }
+                        ("cancel", ShortcutState::Pressed) => {
+                            app.emit("hotkey-cancel", ()).ok();
+                        }
+                        _ => {}
+                    }
+                })
+                .build(),
+        )
         .setup(|app| {
             let config = vtl_core::config::load().unwrap_or_default();
             let dir = dirs::config_dir()
@@ -418,12 +605,27 @@ pub fn run() {
             if !config.audio.enable_sounds {
                 player.set_enabled(false);
             }
+            // Register global hotkeys from config
+            for hotkey_str in [&config.hotkey.push_to_talk, &config.hotkey.free_speech, &config.hotkey.cancel] {
+                if !hotkey_str.is_empty() {
+                    let _ = app.global_shortcut().register(hotkey_str.as_str());
+                }
+            }
+
+            // Attempt to load the ASR engine
+            let engine = load_engine(&config);
+            match &engine {
+                Some(_) => println!("engine: {} model loaded", config.model.active_model_id),
+                None => println!("engine: model '{}' not available; recognition disabled", config.model.active_model_id),
+            }
+
             app.manage(Mutex::new(AppState {
                 config,
                 history,
                 history_path,
                 recorder,
                 player,
+                engine,
             }));
 
             use tauri::{
@@ -479,6 +681,7 @@ pub fn run() {
             start_recording,
             stop_recording,
             cancel_recording,
+            paste_text,
             get_devices,
             get_model_list,
             set_active_model,
