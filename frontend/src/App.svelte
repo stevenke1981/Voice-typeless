@@ -18,7 +18,7 @@
   import SettingsPage from './lib/components/SettingsPage.svelte';
   import { setupEventListeners, teardownEventListeners } from './lib/tauri/events';
   import { appState, isRecording } from './lib/stores/appState.svelte';
-  import { getConfig } from './lib/tauri/commands';
+  import { getConfig, getEngineStatus } from './lib/tauri/commands';
 
   // ─── Navigation state ────────────────────────────────────────────────────
 
@@ -47,6 +47,25 @@
     (async () => {
       await setupEventListeners();
 
+      // Poll initial engine + hotkey registration status (guards against
+      // events lost during setup → webview race where IPC events arrived
+      // before the frontend was ready to receive them).
+      try {
+        const status = await getEngineStatus();
+        if (status.loaded) {
+          appState.engineLoaded = true;
+          appState.modelLoadProgress = 0;
+          appState.modelLoadStage = '';
+        }
+        if (status.hotkey_registration?.length) {
+          for (const r of status.hotkey_registration) {
+            appState.hotkeyRegistration[r.action] = { ok: r.ok, error: r.error };
+          }
+        }
+      } catch {
+        // silent — we'll retry later if needed
+      }
+
       // Load persisted config (theme + hotkeys)
       try {
         const cfg = await getConfig();
@@ -54,7 +73,7 @@
         appState.hotkeyConfig = {
           push_to_talk: (cfg.hotkey as any)?.push_to_talk ?? 'Alt+Space',
           free_speech:  (cfg.hotkey as any)?.free_speech  ?? 'Ctrl+Shift+V',
-          cancel:       (cfg.hotkey as any)?.cancel       ?? 'Escape',
+          cancel:       (cfg.hotkey as any)?.cancel       ?? 'Ctrl+Shift+Escape',
         };
       } catch {
         appState.theme = 'dark';
@@ -77,6 +96,35 @@
   };
 
   const statusLabel = $derived(STATUS_LABELS[appState.status] ?? appState.status);
+
+  // ─── Hotkey debug — show active combos + last event ────────────────────────
+
+  /** Hotkey action → display label map. */
+  const HK_LABELS: Record<string, string> = {
+    ptt:         'PTT',
+    free_speech: 'Free',
+    cancel:      'Cancel',
+  };
+
+  /** True briefly after each hotkey event (self-clears after 1.5 s). */
+  let hotkeyFlash = $state(false);
+
+  /** Short string like "PTT pressed" or "Free released". */
+  const lastHotkeyLabel = $derived(
+    appState.lastHotkeyEvent.action
+      ? `${HK_LABELS[appState.lastHotkeyEvent.action] ?? appState.lastHotkeyEvent.action} ${appState.lastHotkeyEvent.state.toLowerCase()}`
+      : '',
+  );
+
+  // Trigger flash whenever lastHotkeyEvent changes; auto-clear after 1.5 s
+  $effect(() => {
+    const ev = appState.lastHotkeyEvent;
+    if (ev.receivedAt > 0) {
+      hotkeyFlash = true;
+      const timer = setTimeout(() => { hotkeyFlash = false; }, 1500);
+      return () => clearTimeout(timer);
+    }
+  });
 </script>
 
 <!-- Always-mounted floating indicator (renders conditionally inside component) -->
@@ -118,6 +166,16 @@
 
     <!-- Nav controls -->
     <nav class="header-nav" aria-label="Main navigation">
+      {#if showSettings}
+        <button
+          class="icon-btn back-btn"
+          onclick={() => (showSettings = false)}
+          aria-label="Back to main page"
+          title="Back"
+        >
+          ←
+        </button>
+      {/if}
       <button
         class="icon-btn"
         class:active={showSettings}
@@ -126,7 +184,6 @@
         aria-pressed={showSettings}
         title="Settings"
       >
-        <!-- Settings gear (unicode) -->
         ⚙
       </button>
     </nav>
@@ -135,7 +192,7 @@
   <!-- ── Main content area ─────────────────────────────────────────────── -->
   <main class="app-main" id="main-content" tabindex="-1">
     {#if showSettings}
-      <SettingsPage />
+      <SettingsPage onClose={() => (showSettings = false)} />
     {:else}
       <HistoryPanel />
     {/if}
@@ -172,6 +229,57 @@
         {appState.errorMessage.slice(0, 60)}{appState.errorMessage.length > 60 ? '…' : ''}
       </span>
     {/if}
+
+    <!-- ── Hotkey debug overlay ──────────────────────────────────────────── -->
+    <div class="footer-hkdebug" aria-label="Hotkey debug">
+      <!-- Engine load status -->
+      <span
+        class="hk-engine"
+        class:loaded={appState.engineLoaded}
+        class:loading={!appState.engineLoaded && appState.modelLoadStage !== ''}
+        title={appState.engineLoaded ? 'Engine loaded' : 'Engine not loaded'}
+      >
+        {appState.engineLoaded ? '✓' : '✗'}
+      </span>
+
+      <!-- Registered hotkey combos (color-coded by registration status) -->
+      <span class="hkdebug-combos" title="Registered hotkeys">
+        {#each ['push_to_talk', 'free_speech', 'cancel'] as action}
+          {@const reg = appState.hotkeyRegistration[action]}
+          {@const hk = appState.hotkeyConfig[action]}
+          <span
+            class="hk-key"
+            class:hk-ok={reg?.ok}
+            class:hk-fail={reg && !reg.ok}
+            title={reg && !reg.ok ? `Registration failed: ${reg.error}` : hk}
+          >
+            {hk}
+          </span>
+        {/each}
+      </span>
+
+      <!-- Last-recording debug (sample count, text length) -->
+      {#if appState.lastRecordingDebug.samples > 0 || appState.lastRecordingDebug.text_len > 0}
+        <span class="hkdebug-samples" title="Last recording: samples / text length">
+          {appState.lastRecordingDebug.samples > 0
+            ? `${(appState.lastRecordingDebug.samples / 1000).toFixed(1)}k`
+            : '0'}s
+          |
+          {appState.lastRecordingDebug.text_len}c
+        </span>
+      {/if}
+
+      <!-- Flashing last-hotkey indicator -->
+      {#if lastHotkeyLabel}
+        <span
+          class="hkdebug-event"
+          class:flash={hotkeyFlash}
+          title="Last hotkey event: {appState.lastHotkeyEvent.accelerator}"
+        >
+          {lastHotkeyLabel}
+        </span>
+      {/if}
+    </div>
   </footer>
 </div>
 
@@ -280,6 +388,16 @@
     outline-offset: 2px;
   }
 
+  /* Distinct back button styling */
+  .back-btn {
+    font-size: 15px;
+    color: var(--vtl-gray);
+  }
+
+  .back-btn:hover {
+    color: var(--vtl-teal);
+  }
+
   /* ── Main content ────────────────────────────────────────────────────────── */
   .app-main {
     flex: 1;
@@ -370,5 +488,94 @@
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 160px;
+  }
+
+  /* ── Hotkey debug bar ──────────────────────────────────────────────────── */
+  .footer-hkdebug {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  .hk-engine {
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    width: 14px;
+    text-align: center;
+    transition: color 0.2s;
+  }
+  .hk-engine.loaded { color: #22FFAA; }
+  .hk-engine.loading { color: #FFD700; animation: hk-pulse 0.8s ease-in-out infinite; }
+  .hk-engine:not(.loaded):not(.loading) { color: #ff6b6b; }
+
+  @keyframes hk-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.4; }
+  }
+
+  .hkdebug-combos {
+    display: flex;
+    gap: 4px;
+  }
+
+  .hk-key {
+    font-size: 9px;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--vtl-border);
+    background: rgba(255, 255, 255, 0.04);
+    padding: 1px 4px;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+
+  .hkdebug-event {
+    font-size: 9px;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--vtl-teal);
+    padding: 1px 4px;
+    border-radius: 3px;
+    transition: background 0.15s, color 0.15s;
+    white-space: nowrap;
+  }
+
+  .hkdebug-event.flash {
+    background: rgba(0, 230, 200, 0.15);
+    color: var(--vtl-teal);
+    animation: hkflash-pulse 0.3s ease-out;
+  }
+
+  @keyframes hkflash-pulse {
+    0%   { transform: scale(1);   opacity: 1;   }
+    50%  { transform: scale(1.2); opacity: 0.8; }
+    100% { transform: scale(1);   opacity: 1;   }
+  }
+
+  /* Hotkey registration status */
+  .hk-key.hk-ok {
+    color: #22FFAA;
+    border-left: 2px solid #22FFAA;
+    padding-left: 5px;
+  }
+  .hk-key.hk-fail {
+    color: #ff6b6b;
+    border-left: 2px solid #ff6b6b;
+    padding-left: 5px;
+    text-decoration: line-through;
+    opacity: 0.7;
+  }
+
+  /* Recording debug (sample count + text length) */
+  .hkdebug-samples {
+    font-size: 9px;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--vtl-gray);
+    background: rgba(255, 255, 255, 0.04);
+    padding: 1px 4px;
+    border-radius: 3px;
+    white-space: nowrap;
   }
 </style>

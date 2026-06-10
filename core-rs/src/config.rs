@@ -98,7 +98,11 @@ impl Default for HotkeyConfig {
         Self {
             push_to_talk: "Alt+Space".into(),
             free_speech: "Ctrl+Shift+V".into(),
-            cancel: "Escape".into(),
+            // NOTE: on Windows, RegisterHotKey requires modifier keys (Alt/Ctrl/Shift/Win).
+            // Standalone keys like "Escape" or "F1" without modifiers CANNOT be
+            // registered as global shortcuts. Using Ctrl+Shift+Escape ensures reliable
+            // registration across all Windows versions.
+            cancel: "Ctrl+Shift+Escape".into(),
         }
     }
 }
@@ -238,9 +242,19 @@ pub fn save(cfg: &AppConfig) -> Result<(), ConfigError> {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/// Returns the full path to the config file
-/// (`<OS-config-dir>/VoiceTypeless/config.json`).
+/// Returns the full path to the config file.
+///
+/// Priority:
+///   1. `$VTYPELESS_CONFIG_PATH` environment variable (for portable mode)
+///   2. `<OS-config-dir>/VoiceTypeless/config.json` (normal installed mode)
 fn config_path() -> Result<PathBuf, ConfigError> {
+    // Allow override via environment variable (used by portable mode)
+    if let Ok(path) = std::env::var("VTYPELESS_CONFIG_PATH") {
+        if !path.is_empty() {
+            return Ok(PathBuf::from(path));
+        }
+    }
+
     let base = dirs::config_dir().ok_or_else(|| {
         ConfigError::NoConfigDir("no OS config directory found".into())
     })?;

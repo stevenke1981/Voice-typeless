@@ -1,1 +1,1 @@
-{}
+{"default":{"identifier":"default","description":"Default capability — grants global-shortcut permissions for system-wide hotkeys","local":true,"windows":["main"],"permissions":["core:default","global-shortcut:default","shell:default"]}}

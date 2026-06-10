@@ -16,6 +16,7 @@ tokio = { version = "1", features = ["rt", "time", "macros"] }
 dirs = "5"
 enigo = "0.3"
 log = "0.4"
+ureq = "2"
 
 # Core logic library — Rust rewrite of Go core/
 vtl-core = { path = "../core-rs", features = ["engine-sensevoice"] }

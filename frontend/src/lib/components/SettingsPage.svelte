@@ -36,6 +36,15 @@
   import SystemSection from './settings/SystemSection.svelte';
   import SettingsFooter from './settings/SettingsFooter.svelte';
 
+  // ─── Props ───────────────────────────────────────────────────────────────────
+
+  interface Props {
+    /** Callback invoked when the user clicks the back button. */
+    onClose?: () => void;
+  }
+
+  const { onClose = undefined }: Props = $props();
+
   // ─── State ─────────────────────────────────────────────────────────────────
 
   let config = $state<LocalConfig>(structuredClone(DEFAULT_CONFIG));
@@ -197,6 +206,19 @@
 <!-- ── Page shell ──────────────────────────────────────────────────────────── -->
 <div class="settings-page" aria-label="Settings" aria-busy={isLoading}>
 
+  <!-- Back button row -->
+  {#if onClose}
+    <div class="settings-back-row">
+      <button
+        class="settings-back-btn"
+        onclick={onClose}
+        aria-label="Back to main page"
+      >
+        <span aria-hidden="true">←</span> Back
+      </button>
+    </div>
+  {/if}
+
   {#if isLoading}
     <!-- Loading skeleton -->
     <div class="loading-skeleton" role="status" aria-live="polite">
@@ -326,6 +348,37 @@
 
   /* Tailwind-like helper for DevicePicker spacing */
   :global(.mb-field) { margin-bottom: 12px; }
+
+  /* ── Back button ────────────────────────────────────────────────────────────── */
+  .settings-back-row {
+    padding: 4px 8px 0;
+    border-bottom: 1px solid rgba(74, 74, 82, 0.3);
+  }
+
+  .settings-back-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: none;
+    border: none;
+    color: var(--vtl-gray);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    padding: 8px 8px;
+    border-radius: 6px;
+    transition: color 0.15s, background 0.15s;
+  }
+
+  .settings-back-btn:hover {
+    color: var(--vtl-text-dark);
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .settings-back-btn:focus-visible {
+    outline: 2px solid var(--vtl-teal);
+    outline-offset: 2px;
+  }
 
   :global(.toggle-btn) {
     flex-shrink: 0;

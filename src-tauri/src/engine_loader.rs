@@ -32,9 +32,15 @@ fn resolve_models_dir(config: &AppConfig) -> Option<PathBuf> {
     }
 
     // 4. Executable-relative candidates
+    //
+    // Priority within this group:
+    //   a) `./models/`        — portable mode (EXE + models/ side by side)
+    //   b) `../models/`       — debug build (target/debug/ → project root)
+    //   c) `../../models/`    — deeper nesting
+    //   d) `../../../models/` — release build (target/release/ → project root)
     if let Ok(exe) = std::env::current_exe() {
         if let Some(exe_dir) = exe.parent() {
-            for rel in &["../models", "../../models"] {
+            for rel in &["./models", "../models", "../../models", "../../../models"] {
                 let candidate = exe_dir.join(rel);
                 if candidate.is_dir() {
                     return Some(candidate);
@@ -51,7 +57,22 @@ fn resolve_models_dir(config: &AppConfig) -> Option<PathBuf> {
         }
     }
 
-    info!("Model directory not found via any resolution strategy");
+    // ══ debug: show what we tried ═══════════════════════════════════════════
+    println!("engine: model directory not found — tried:");
+    if let Ok(exe) = std::env::current_exe() {
+        println!("  exe location: {:?}", exe);
+        if let Some(exe_dir) = exe.parent() {
+            for rel in &["./models", "../models", "../../models", "../../../models"] {
+                println!("  {} → {:?}", rel, exe_dir.join(rel));
+            }
+        }
+    } else {
+        println!("  (could not get exe path)");
+    }
+    println!("  CWD models/  → {:?}", std::env::current_dir().map(|d| d.join("models")));
+    println!("  CWD ../models/ → {:?}", std::env::current_dir().map(|d| d.join("../models")));
+    // ────────────────────────────────────────────────────────────────────────
+
     None
 }
 

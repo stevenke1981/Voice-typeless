@@ -2,6 +2,7 @@ use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use serde::Serialize;
 use tauri::{Emitter, State};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use vtl_core::audio::{AudioChunk, AudioError, AudioPlayer, AudioRecorder, DeviceEnumerator, Enumerator, RecorderConfig};
@@ -24,6 +25,13 @@ pub fn start_recording(
 ) -> Result<(), String> {
     println!("start_recording: mode={mode}");
     let s = state.lock().map_err(|e| e.to_string())?;
+
+    // REQUIRE engine to be loaded — no engine means no point recording.
+    if s.engine.is_none() {
+        let msg = "Model not loaded yet. Please wait for the model to download, then try again.".to_string();
+        return Err(msg);
+    }
+
     let cfg = RecorderConfig {
         device_id: s.config.audio.device_id.clone(),
         sample_rate: s.config.audio.sample_rate,
@@ -147,6 +155,13 @@ pub fn stop_recording(
         Some(r) => (r.text, r.language, r.confidence),
         None => (String::new(), "en".into(), 0.0),
     };
+    println!(
+        "stop_recording: samples={}, duration={}ms, text_len={}, confidence={:.2}",
+        chunk.samples.len(),
+        duration_ms,
+        text.len(),
+        confidence,
+    );
     app.emit(
         "recognition-result",
         serde_json::json!({
@@ -154,6 +169,7 @@ pub fn stop_recording(
             "language": language,
             "confidence": confidence,
             "duration_ms": duration_ms,
+            "sample_count": chunk.samples.len(),
         }),
     )
     .map_err(|e| e.to_string())?;
@@ -211,7 +227,10 @@ pub fn get_devices() -> Result<Vec<serde_json::Value>, String> {
 #[tauri::command]
 pub fn get_model_list(state: State<'_, Mutex<AppState>>) -> Result<Vec<ModelInfo>, String> {
     let s = state.lock().map_err(|e| e.to_string())?;
-    Ok(available_models(&s.config.model.active_model_id))
+    Ok(available_models(
+        &s.config.model.active_model_id,
+        &s.config.model.models_dir,
+    ))
 }
 
 #[tauri::command]
@@ -455,4 +474,80 @@ fn do_paste(text: &str) -> Result<(), String> {
 #[tauri::command]
 pub fn paste_text(text: String) -> Result<(), String> {
     do_paste(&text)
+}
+
+/// Try to (re-)load the ASR engine.
+///
+/// Returns the current engine loading status.
+///
+/// The frontend calls this once after `setupEventListeners()` to guard
+/// against the race where `model-ready` was emitted before the Svelte app
+/// had registered its IPC listeners (Tauri setup → blocking model load).
+#[derive(Serialize)]
+pub struct EngineStatus {
+    pub loaded: bool,
+    pub model_id: String,
+    pub device: String,
+    /// Registration result per hotkey action. Empty while registration hasn't
+    /// populated yet (same race-condition window as engine load status).
+    pub hotkey_registration: Vec<serde_json::Value>,
+}
+
+#[tauri::command]
+pub fn get_engine_status(
+    state: State<'_, Mutex<AppState>>,
+) -> Result<EngineStatus, String> {
+    let s = state.lock().map_err(|e| e.to_string())?;
+    Ok(EngineStatus {
+        loaded: s.engine.is_some(),
+        model_id: s.config.model.active_model_id.clone(),
+        device: s.config.model.device.clone(),
+        hotkey_registration: s.hotkey_registration.clone(),
+    })
+}
+
+/// Called by the frontend after a model download completes so the engine
+/// can be initialised without restarting the app.
+#[tauri::command]
+pub fn retry_engine(
+    app: tauri::AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    // Read current config (models_dir may have been set by downloader)
+    let config = vtl_core::config::load().map_err(|e| e.to_string())?;
+    let engine = crate::engine_loader::load_engine(&config);
+
+    match engine {
+        Some(eng) => {
+            let mut s = state.lock().map_err(|e| e.to_string())?;
+            s.engine = Some(eng);
+            // Also update the in-memory config so model info stays correct
+            s.config.model.models_dir = config.model.models_dir;
+            drop(s);
+            println!("engine: retry_engine — model loaded successfully");
+            app.emit(
+                "model-ready",
+                serde_json::json!({
+                    "modelId": config.model.active_model_id,
+                    "device": config.model.device,
+                }),
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(())
+        }
+        None => {
+            println!("engine: retry_engine — still could not load model");
+            app.emit(
+                "model-error",
+                serde_json::json!({
+                    "message": format!(
+                        "Failed to load model '{}' after download.",
+                        config.model.active_model_id
+                    ),
+                }),
+            )
+            .ok();
+            Err("model still not loadable after download".into())
+        }
+    }
 }

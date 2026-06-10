@@ -12,4 +12,5 @@ pub struct AppState {
     pub(crate) recorder: Recorder,
     pub(crate) player: Player,
     pub(crate) engine: Option<Box<dyn engine_mod::Engine>>,
+    pub(crate) hotkey_registration: Vec<serde_json::Value>,
 }

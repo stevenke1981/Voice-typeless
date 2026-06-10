@@ -126,3 +126,23 @@ export const getModelList = () =>
 
 export const setActiveModel = (modelId: string) =>
   invoke<void>("set_active_model", { modelId });
+
+export const retryEngine = () =>
+  invoke<void>("retry_engine");
+
+export interface HotkeyRegEntry {
+  action: string;
+  hotkey: string;
+  ok: boolean;
+  error: string;
+}
+
+export interface EngineStatus {
+  loaded: boolean;
+  model_id: string;
+  device: string;
+  hotkey_registration: HotkeyRegEntry[];
+}
+
+export const getEngineStatus = () =>
+  invoke<EngineStatus>("get_engine_status");

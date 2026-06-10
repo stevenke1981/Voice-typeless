@@ -7,7 +7,7 @@
 
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { appState } from '../stores/appState.svelte';
-import { startRecording, stopRecording, cancelRecording } from './commands';
+import { startRecording, stopRecording, cancelRecording, retryEngine } from './commands';
 
 // ─── IPC Event Payload Types (mirrors architecture.md §4.2) ──────────────────
 
@@ -54,6 +54,12 @@ export interface VadSilencePayload {
   duration_ms: number;
 }
 
+export interface DebugHotkeyEventPayload {
+  action: string;
+  accelerator: string;
+  state: string;
+}
+
 // ─── Listener Registry ────────────────────────────────────────────────────────
 
 /** Collected unlisten functions; call `teardownEventListeners()` on app exit. */
@@ -86,6 +92,13 @@ export async function setupEventListeners(): Promise<void> {
     await listen<RecognitionResultPayload>('recognition-result', (e) => {
       appState.status = 'idle';
       appState.currentText = e.payload.text;
+
+      // Store debug info
+      appState.lastRecordingDebug = {
+        samples: (e.payload as any).sample_count ?? 0,
+        duration_ms: e.payload.duration_ms,
+        text_len: e.payload.text.length,
+      };
 
       // Auto-paste is handled by the Rust backend in stop_recording.
       // The frontend only updates UI state.
@@ -124,6 +137,8 @@ export async function setupEventListeners(): Promise<void> {
       appState.activeInferenceDevice = e.payload.device;
       appState.modelLoadProgress = 0;
       appState.modelLoadStage = '';
+      appState.engineLoaded = true;
+      appState.errorMessage = ''; // clear engine-not-loaded error
     }),
   );
 
@@ -134,6 +149,7 @@ export async function setupEventListeners(): Promise<void> {
       appState.errorMessage = e.payload.message;
       appState.modelLoadProgress = 0;
       appState.modelLoadStage = '';
+      appState.engineLoaded = false;
     }),
   );
 
@@ -153,11 +169,40 @@ export async function setupEventListeners(): Promise<void> {
     }),
   );
 
+  // ── model-required (emitted when engine loading fails) ──────────────────────
+  unlisteners.push(
+    await listen<ModelErrorPayload>('model-required', (e) => {
+      appState.status = 'error';
+      appState.errorMessage = e.payload.message;
+      appState.modelLoadProgress = 0;
+      appState.modelLoadStage = 'download';
+    }),
+  );
+
+  // ── model-downloaded (emitted after background download completes) ─────────
+  unlisteners.push(
+    await listen<{ modelId: string; path: string }>('model-downloaded', () => {
+      // Model files are on disk — try to load the engine
+      appState.modelLoadStage = 'load';
+      appState.modelLoadProgress = 0.5;
+      retryEngine().catch((err) => {
+        appState.status = 'error';
+        appState.errorMessage = `Engine load failed: ${err}`;
+        appState.modelLoadProgress = 0;
+        appState.modelLoadStage = '';
+      });
+    }),
+  );
+
   // ── hotkey-ptt-pressed ─────────────────────────────────────────────────────
   unlisteners.push(
     await listen<void>('hotkey-ptt-pressed', () => {
-      if (appState.status === 'idle') {
-        startRecording('push_to_talk').catch(() => {});
+      if (appState.status === 'idle' || appState.status === 'error') {
+        appState.errorMessage = '';    // clear previous error
+        startRecording('push_to_talk').catch((err) => {
+          appState.status = 'idle';
+          appState.errorMessage = String(err);
+        });
       }
     }),
   );
@@ -174,8 +219,12 @@ export async function setupEventListeners(): Promise<void> {
   // ── hotkey-free-speech (toggle) ────────────────────────────────────────────
   unlisteners.push(
     await listen<void>('hotkey-free-speech', () => {
-      if (appState.status === 'idle') {
-        startRecording('free_speech').catch(() => {});
+      if (appState.status === 'idle' || appState.status === 'error') {
+        appState.errorMessage = '';
+        startRecording('free_speech').catch((err) => {
+          appState.status = 'idle';
+          appState.errorMessage = String(err);
+        });
       } else if (appState.status === 'recording') {
         stopRecording().catch(() => {});
       }
@@ -187,6 +236,31 @@ export async function setupEventListeners(): Promise<void> {
     await listen<void>('hotkey-cancel', () => {
       if (appState.status === 'recording' || appState.status === 'processing') {
         cancelRecording().catch(() => {});
+      }
+    }),
+  );
+
+  // ── debug-hotkey-event (populates appState.lastHotkeyEvent) ────────────────
+  unlisteners.push(
+    await listen<DebugHotkeyEventPayload>('debug-hotkey-event', (e) => {
+      appState.lastHotkeyEvent = {
+        action: e.payload.action,
+        accelerator: e.payload.accelerator,
+        state: e.payload.state,
+        receivedAt: Date.now(),
+      };
+    }),
+  );
+
+  // ── hotkey-registration (registration success/failure per hotkey) ─────────
+  unlisteners.push(
+    await listen<{ results: Array<{ action: string; hotkey: string; ok: boolean; error: string }> }>('hotkey-registration', (e) => {
+      for (const r of e.payload.results) {
+        appState.hotkeyRegistration[r.action] = { ok: r.ok, error: r.error };
+        // Also update the hotkey display strings to what was actually configured
+        if (r.action === 'push_to_talk') appState.hotkeyConfig.push_to_talk = r.hotkey;
+        if (r.action === 'free_speech')  appState.hotkeyConfig.free_speech  = r.hotkey;
+        if (r.action === 'cancel')       appState.hotkeyConfig.cancel       = r.hotkey;
       }
     }),
   );

@@ -65,7 +65,37 @@ export const appState = $state({
   hotkeyConfig: {
     push_to_talk: 'Alt+Space',
     free_speech: 'Ctrl+Shift+V',
-    cancel: 'Escape',
+    cancel: 'Ctrl+Shift+Escape',
+  },
+
+  /** Registration status per hotkey (populated by hotkey-registration event).
+   * Starts empty so the UI shows neutral gray (not alarmist red) while
+   * waiting for the IPC event that may arrive after the Svelte app mounts. */
+  hotkeyRegistration: {} as Record<string, { ok: boolean; error: string }>,
+
+  /** Debug info from the last stop_recording call (samples captured etc.). */
+  lastRecordingDebug: {
+    /** Number of audio samples captured (0 = empty buffer). */
+    samples: 0,
+    /** Duration of audio in ms. */
+    duration_ms: 0,
+    /** Length of recognised text (0 = no recognition). */
+    text_len: 0,
+  },
+
+  /** True once the ASR engine has been successfully loaded. Reset to false on model-error. */
+  engineLoaded: false,
+
+  /** Debug info about the most recent hotkey event received from the Rust backend. */
+  lastHotkeyEvent: {
+    /** Action name ("ptt", "free_speech", "cancel"). */
+    action: '',
+    /** Raw accelerator string from the OS-level shortcut event. */
+    accelerator: '',
+    /** "Pressed" or "Released". */
+    state: '',
+    /** `Date.now()` when the event was received. */
+    receivedAt: 0,
   },
 });
 

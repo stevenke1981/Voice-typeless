@@ -1,0 +1,4 @@
+Voice-typeless Portable Mode
+Place this file next to voice-typeless.exe to enable portable mode.
+All config, history, and downloaded models will be stored locally
+in the same directory, with no data written to %APPDATA% or the registry.
