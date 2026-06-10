@@ -89,16 +89,49 @@ pub fn run() {
                 }
             }
 
-            // Attempt to load the ASR engine
+            // Attempt to load the ASR engine with progress events
+            let app_handle = app.handle();
+            app_handle
+                .emit(
+                    "model-loading",
+                    serde_json::json!({
+                        "progress": 0.3,
+                        "stage": "load",
+                    }),
+                )
+                .ok();
+
             let engine = engine_loader::load_engine(&config);
             match &engine {
                 Some(_) => {
-                    println!("engine: {} model loaded", config.model.active_model_id)
+                    println!("engine: {} model loaded", config.model.active_model_id);
+                    app_handle
+                        .emit(
+                            "model-ready",
+                            serde_json::json!({
+                                "modelId": config.model.active_model_id,
+                                "device": config.model.device,
+                            }),
+                        )
+                        .ok();
                 }
-                None => println!(
-                    "engine: model '{}' not available; recognition disabled",
-                    config.model.active_model_id
-                ),
+                None => {
+                    println!(
+                        "engine: model '{}' not available; recognition disabled",
+                        config.model.active_model_id
+                    );
+                    app_handle
+                        .emit(
+                            "model-error",
+                            serde_json::json!({
+                                "message": format!(
+                                    "Model '{}' could not be loaded. Check models/ directory.",
+                                    config.model.active_model_id
+                                ),
+                            }),
+                        )
+                        .ok();
+                }
             }
 
             app.manage(Mutex::new(AppState {

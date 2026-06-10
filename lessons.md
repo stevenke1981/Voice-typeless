@@ -30,3 +30,10 @@
 **Trigger:** C1 cleanup — after all Rust rewrite code was compiling and tests passing, README.md still said "Go Core runs as sidecar", docs/api.md still referenced "Go Core sidecar", architecture.md used `core/` path prefixes instead of `core-rs/`, and frontend comments mentioned "Core sidecar".
 **Rule:** After completing implementation in a technology-migration rewrite, run `grep` across the entire repo for old-tech keywords (e.g. `go|Go|sidecar|golang`) to find stale references in docs, README, code comments, and build scripts. Don't assume docs are accurate just because code compiles.
 **Source:** rust-rewrite-core Phase 3 cleanup
+
+---
+
+## Lesson #5 — 2026-06-10
+**Trigger:** Refactoring large Rust/Svelte files (>500 lines) into module directories
+**Rule:** When refactoring Rust single-file modules (`foo.rs`) into directory modules (`foo/mod.rs`), name trait definition files `traits.rs` (not `trait.rs`) because `trait` is a reserved keyword in Rust 2018+. After renaming, update all `use crate::module::trait::Item` paths to `use crate::module::traits::Item` across the crate.
+**Source:** refactor: split all files over 500 lines into module directories

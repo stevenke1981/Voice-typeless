@@ -46,6 +46,10 @@ export interface ModelReadyPayload {
   device: 'directml' | 'cuda' | 'cpu';
 }
 
+export interface ModelErrorPayload {
+  message: string;
+}
+
 export interface VadSilencePayload {
   duration_ms: number;
 }
@@ -123,10 +127,29 @@ export async function setupEventListeners(): Promise<void> {
     }),
   );
 
+  // ── model-error (engine failed to load at startup) ────────────────────────
+  unlisteners.push(
+    await listen<ModelErrorPayload>('model-error', (e) => {
+      appState.status = 'error';
+      appState.errorMessage = e.payload.message;
+      appState.modelLoadProgress = 0;
+      appState.modelLoadStage = '';
+    }),
+  );
+
   // ── vad-silence-detected (informational; VAD auto-stop is handled in Core) ─
   unlisteners.push(
     await listen<VadSilencePayload>('vad-silence-detected', (_e) => {
       // Core will follow up with recording-stopped; nothing extra needed here.
+    }),
+  );
+
+  // ── vad-auto-stop (emitted by Core VAD monitor on 3s silence) ──────────────
+  unlisteners.push(
+    await listen<void>('vad-auto-stop', () => {
+      if (appState.status === 'recording') {
+        stopRecording().catch(() => {});
+      }
     }),
   );
 

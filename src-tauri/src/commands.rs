@@ -1,4 +1,6 @@
+use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use tauri::{Emitter, State};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
@@ -43,8 +45,11 @@ pub fn start_recording(
         }
         Ok(_) => {}
     }
+    // Subscribe for VAD monitoring (used in free_speech mode)
+    let rx = s.recorder.subscribe();
     // Play start tone (no-op if sounds disabled via set_enabled)
     let _ = s.player.play_start();
+    let is_free_speech = mode == "free_speech";
     drop(s);
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -52,6 +57,45 @@ pub fn start_recording(
         .as_millis();
     app.emit("recording-started", serde_json::json!({"timestamp": ts}))
         .map_err(|e| e.to_string())?;
+
+    // ── VAD auto-stop for free_speech mode ────────────────────────────────
+    // Spawn a background thread that monitors live audio chunks via the
+    // subscriber channel.  If no speech is detected for 3 continuous seconds,
+    // emit `vad-auto-stop` so the frontend can call stop_recording().
+    if is_free_speech {
+        let app_handle = app.clone();
+        let vad_cfg = vtl_core::audio::VadConfig::default(); // 0.02 threshold, 3000ms silence
+        std::thread::spawn(move || {
+            let mut last_speech = Instant::now();
+            let silence_timeout = Duration::from_millis(vad_cfg.silence_duration_ms as u64);
+            loop {
+                match rx.recv_timeout(Duration::from_millis(500)) {
+                    Ok(chunk) => {
+                        if vtl_core::audio::vad::is_speech(&chunk.samples, vad_cfg.clone()) {
+                            last_speech = Instant::now();
+                        }
+                        // Emit informational VAD-silence events for UI feedback
+                        let silence_ms = last_speech.elapsed().as_millis() as u32;
+                        if silence_ms > 1000 && silence_ms % 1000 < 500 {
+                            let _ = app_handle.emit(
+                                "vad-silence-detected",
+                                serde_json::json!({ "duration_ms": silence_ms }),
+                            );
+                        }
+                    }
+                    Err(RecvTimeoutError::Timeout) => {
+                        // No audio chunk arrived in 500 ms — check silence timeout
+                        if last_speech.elapsed() >= silence_timeout {
+                            let _ = app_handle.emit("vad-auto-stop", ());
+                            break;
+                        }
+                    }
+                    Err(RecvTimeoutError::Disconnected) => break,
+                }
+            }
+        });
+    }
+
     Ok(())
 }
 
@@ -253,7 +297,7 @@ pub fn set_device(
     device: String,
 ) -> Result<(), String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
-    s.config.model.device = device;
+    s.config.audio.device_id = device;
     vtl_core::config::save(&s.config).map_err(|e| e.to_string())
 }
 

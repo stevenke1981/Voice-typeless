@@ -6,19 +6,59 @@ use log::info;
 use vtl_core::config::AppConfig;
 use vtl_core::engine::{self as engine_mod, DeviceType, ModelType};
 
-pub(crate) fn load_engine(config: &AppConfig) -> Option<Box<dyn engine_mod::Engine>> {
-    let models_dir_str = if config.model.models_dir.is_empty() {
-        let fallback = PathBuf::from("models");
-        if fallback.is_dir() {
-            info!("Using fallback models directory: {:?}", fallback);
-            fallback.to_string_lossy().to_string()
-        } else {
-            info!("Model configuration incomplete: models_dir not set and ./models/ not found");
-            return None;
+/// Resolve the models directory by trying a sequence of candidate paths.
+///
+/// Priority order:
+///   1. Explicit `models_dir` from config (already set)
+///   2. CWD-relative  `models/`          (developer from project root)
+///   3. CWD-relative  `../models/`       (cargo tauri dev from src-tauri/)
+///   4. Exec-rel      `../models/`       (target/debug/ → project root)
+///   5. Config-dir    `{config}/VoiceTypeless/models/`  (installed app)
+fn resolve_models_dir(config: &AppConfig) -> Option<PathBuf> {
+    // 1. Explicit path from config
+    if !config.model.models_dir.is_empty() {
+        let p = PathBuf::from(&config.model.models_dir);
+        if p.is_dir() {
+            return Some(p);
         }
-    } else {
-        config.model.models_dir.clone()
-    };
+    }
+
+    // 2–3. CWD-relative candidates
+    for rel in &["models", "../models"] {
+        let candidate = PathBuf::from(rel);
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
+
+    // 4. Executable-relative candidates
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            for rel in &["../models", "../../models"] {
+                let candidate = exe_dir.join(rel);
+                if candidate.is_dir() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+
+    // 5. Config directory fallback
+    if let Some(cfg_dir) = dirs::config_dir() {
+        let candidate = cfg_dir.join("VoiceTypeless").join("models");
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
+
+    info!("Model directory not found via any resolution strategy");
+    None
+}
+
+pub(crate) fn load_engine(config: &AppConfig) -> Option<Box<dyn engine_mod::Engine>> {
+    let models_dir = resolve_models_dir(config)?;
+    let models_dir_str = models_dir.to_string_lossy().to_string();
+    info!("Using models directory: {:?}", models_dir);
 
     if config.model.active_model_id.is_empty() {
         info!("Model configuration incomplete: active_model_id not set");
