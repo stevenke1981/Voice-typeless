@@ -16,3 +16,17 @@
 **Trigger:** After completing C1+C3, updating the `.opencode/plans/plan.md` must include both marking sub-tasks done AND adjusting the "Definition of Done" items that were partially or fully handled.
 **Rule:** After finishing each plan phase, re-read the full plan file and update all relevant checkboxes + metadata before moving to the next phase, not just the sub-task you were working on.
 **Source:** rust-rewrite-core C1c cleanup
+
+---
+
+## Lesson #3 — 2026-06-10
+**Trigger:** C1d — Tauri event system integration: when bridging Rust engine results to Svelte frontend, the frontend's `listen()` event name must match the `emit()` name exactly on both sides. The Rust side uses `app_handle.emit("event-name", payload)`; Svelte side uses `listen("event-name", callback)`.
+**Rule:** When debugging Tauri IPC bridge events that are received on the frontend as empty objects or not at all, verify (1) event name string match (case-sensitive), (2) Tauri event feature is enabled in `Cargo.toml`, (3) `InvokeHandler` closure captures `app_handle()` by clone, and (4) the event is registered before the frontend mount via `onMount`.
+**Source:** rust-rewrite-core C1d
+
+---
+
+## Lesson #4 — 2026-06-10
+**Trigger:** C1 cleanup — after all Rust rewrite code was compiling and tests passing, README.md still said "Go Core runs as sidecar", docs/api.md still referenced "Go Core sidecar", architecture.md used `core/` path prefixes instead of `core-rs/`, and frontend comments mentioned "Core sidecar".
+**Rule:** After completing implementation in a technology-migration rewrite, run `grep` across the entire repo for old-tech keywords (e.g. `go|Go|sidecar|golang`) to find stale references in docs, README, code comments, and build scripts. Don't assume docs are accurate just because code compiles.
+**Source:** rust-rewrite-core Phase 3 cleanup

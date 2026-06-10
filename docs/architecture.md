@@ -243,7 +243,7 @@ Voice-typeless/
 
 
 
-### 3.1 core/engine
+### 3.1 core-rs/src/engine
 
 ```rust
 // core-rs/src/engine/mod.rs — vtl-core engine module
@@ -338,7 +338,7 @@ pub fn probe_device() -> DeviceType {
 }
 ```
 
-### 3.2 core/audio
+### 3.2 core-rs/src/audio
 
 ```rust
 // core-rs/src/audio/mod.rs — vtl-core audio module
@@ -426,7 +426,7 @@ pub fn new_player() -> impl AudioPlayer { /* sees malgo-sys */ }
 pub fn new_enumerator() -> impl DeviceEnumerator { /* sees malgo-sys */ }
 ```
 
-### 3.3 core/hotkey
+### 3.3 core-rs/src/hotkey
 
 ```rust
 // core-rs/src/hotkey/mod.rs — vtl-core hotkey module
@@ -514,7 +514,7 @@ pub fn new_hotkey_manager() -> impl HotkeyManager {
 }
 ```
 
-### 3.4 core/paste
+### 3.4 core-rs/src/paste
 
 ```go
 // core-rs/src/paste/mod.rs — vtl-core paste module
@@ -571,7 +571,7 @@ pub fn new_paster(cfg: PasteConfig) -> impl Paster { /* platform factory */ }
 pub fn new_clipboard_guard(hold: Duration) -> impl ClipboardGuard { /* platform factory */ }
 ```
 
-### 3.5 core/processor
+### 3.5 core-rs/src/processor
 
 ```go
 // core-rs/src/processor/mod.rs — vtl-core processor module
@@ -1611,7 +1611,7 @@ Plugin failures are **non-fatal**: if a plugin errors or times out, the original
 Raw ASR output
       │
       ▼
-core/processor pipeline (filler filter, lang mix, punctuation)
+core-rs/src/processor pipeline (filler filter, lang mix, punctuation)
       │
       ▼
 Plugin 1 (alphabetical by filename)

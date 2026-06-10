@@ -46,7 +46,7 @@
   /**
    * `elapsedMs` counts up every second while recording.
    * When processing, we switch to `appState.recordingDuration` (actual value
-   * reported by the Core sidecar).
+   * reported by vtl-core).
    */
   let elapsedMs = $state(0);
 

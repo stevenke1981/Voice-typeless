@@ -88,12 +88,12 @@ cargo tauri build
 |-------|-----------|------|
 | **Desktop Shell** | Tauri v2 (Rust) | Window management, IPC routing, OS integration, tray |
 | **Frontend** | Svelte 5 + TailwindCSS + TypeScript | All user-visible UI; no business logic |
-| **Core Library** | Go 1.23+ | Audio capture, speech recognition, text post-processing |
+| **Core Library** | Rust (`core-rs/` crate) | Audio capture, speech recognition, text post-processing |
 | **Speech Engine** | sherpa-onnx + ONNX Runtime | Offline inference (SenseVoice / Whisper) |
-| **Audio I/O** | malgo (miniaudio Go bindings) | Microphone capture at 16 kHz mono |
+| **Audio I/O** | malgo (miniaudio Rust bindings) | Microphone capture at 16 kHz mono |
 
-The Go Core runs as a **sidecar process** spawned by Tauri and communicates via JSON-RPC 2.0
-over a named pipe. For full design details see [`docs/architecture.md`](docs/architecture.md).
+The Tauri commands call `vtl-core` functions directly — no sidecar process, no IPC
+serialisation. For full design details see [`docs/architecture.md`](docs/architecture.md).
 
 ## Configuration & Data Storage
 

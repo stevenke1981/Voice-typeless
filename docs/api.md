@@ -284,9 +284,8 @@ await invoke("set_config", { config: { system: { autoStart: true } } });
 
 ## 6. Recording Commands
 
-> ⚠️ **Stub status in v0.2.0** — These commands require Go Core integration (speech model
-> loaded) to produce real results. All stubs return placeholder values. Use
-> [`run_demo`](#run_demo) for UI testing until the Go Core sidecar is integrated.
+> ⚠️ **Note** — These commands call `vtl-core` directly via Tauri command bridge. The speech
+> model must be loaded before recording; see [`load_model`](#load_model).
 
 ### `start_recording`
 
@@ -488,8 +487,8 @@ interface DeviceInfo {
 
 ## 9. Events Reference
 
-The Go Core sidecar emits events over the IPC channel; the Rust layer re-emits them as Tauri
-global events. Subscribe using `@tauri-apps/api/event`:
+vtl-core emits events directly over the Tauri event bus. Subscribe using
+`@tauri-apps/api/event`:
 
 ```typescript
 import { listen } from "@tauri-apps/api/event";

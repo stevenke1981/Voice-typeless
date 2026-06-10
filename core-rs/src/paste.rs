@@ -6,7 +6,7 @@
 //! via Win32 `OpenClipboard` / `SetClipboardData` (Windows)
 //! or no-op stubs (other platforms).
 
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -92,6 +92,19 @@ pub trait ClipboardGuard {
 // ---------------------------------------------------------------------------
 // Platform clipboard — Win32 / stub
 // ---------------------------------------------------------------------------
+
+/// Global lock serializing clipboard access (Win32 clipboard is process-wide).
+static CLIPBOARD_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+/// Run `f` while holding the global clipboard lock.
+///
+/// On Windows, `OpenClipboard` can only succeed from one thread at a time
+/// per process. This lock serialises all clipboard I/O to prevent
+/// test-level and runtime contention.
+fn with_clipboard_lock<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = CLIPBOARD_LOCK.lock().expect("clipboard lock poisoned");
+    f()
+}
 
 #[cfg(windows)]
 mod clipboard_sys {
@@ -215,12 +228,12 @@ mod clipboard_sys {
 
 /// Reads the current text content from the system clipboard.
 pub fn read_clipboard() -> Result<String, PasteError> {
-    clipboard_sys::read_text()
+    with_clipboard_lock(|| clipboard_sys::read_text())
 }
 
 /// Writes text content to the system clipboard.
 pub fn write_clipboard(text: &str) -> Result<(), PasteError> {
-    clipboard_sys::write_text(text)
+    with_clipboard_lock(|| clipboard_sys::write_text(text))
 }
 
 // ---------------------------------------------------------------------------
