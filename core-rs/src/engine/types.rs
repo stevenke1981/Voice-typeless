@@ -210,17 +210,32 @@ mod tests {
 
     #[test]
     fn test_model_type_from_str() {
-        assert_eq!("sensevoice".parse::<ModelType>().unwrap(), ModelType::SenseVoice);
-        assert_eq!("whisper-tiny".parse::<ModelType>().unwrap(), ModelType::WhisperTiny);
-        assert_eq!("whisper-cpp".parse::<ModelType>().unwrap(), ModelType::WhisperCpp);
-        assert_eq!("custom-onnx".parse::<ModelType>().unwrap(), ModelType::CustomOnnx);
+        assert_eq!(
+            "sensevoice".parse::<ModelType>().unwrap(),
+            ModelType::SenseVoice
+        );
+        assert_eq!(
+            "whisper-tiny".parse::<ModelType>().unwrap(),
+            ModelType::WhisperTiny
+        );
+        assert_eq!(
+            "whisper-cpp".parse::<ModelType>().unwrap(),
+            ModelType::WhisperCpp
+        );
+        assert_eq!(
+            "custom-onnx".parse::<ModelType>().unwrap(),
+            ModelType::CustomOnnx
+        );
         assert!("unknown".parse::<ModelType>().is_err());
     }
 
     #[test]
     fn test_device_type_from_str() {
         assert_eq!("auto".parse::<DeviceType>().unwrap(), DeviceType::Auto);
-        assert_eq!("directml".parse::<DeviceType>().unwrap(), DeviceType::DirectML);
+        assert_eq!(
+            "directml".parse::<DeviceType>().unwrap(),
+            DeviceType::DirectML
+        );
         assert_eq!("cuda".parse::<DeviceType>().unwrap(), DeviceType::Cuda);
         assert_eq!("cpu".parse::<DeviceType>().unwrap(), DeviceType::Cpu);
         assert!("unknown".parse::<DeviceType>().is_err());

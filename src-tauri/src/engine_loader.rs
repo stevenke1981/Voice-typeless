@@ -69,8 +69,14 @@ fn resolve_models_dir(config: &AppConfig) -> Option<PathBuf> {
     } else {
         println!("  (could not get exe path)");
     }
-    println!("  CWD models/  → {:?}", std::env::current_dir().map(|d| d.join("models")));
-    println!("  CWD ../models/ → {:?}", std::env::current_dir().map(|d| d.join("../models")));
+    println!(
+        "  CWD models/  → {:?}",
+        std::env::current_dir().map(|d| d.join("models"))
+    );
+    println!(
+        "  CWD ../models/ → {:?}",
+        std::env::current_dir().map(|d| d.join("../models"))
+    );
     // ────────────────────────────────────────────────────────────────────────
 
     None
@@ -117,10 +123,7 @@ pub(crate) fn load_engine(config: &AppConfig) -> Option<Box<dyn engine_mod::Engi
     let mut engine = match engine_mod::new_engine(model_type) {
         Ok(e) => e,
         Err(e) => {
-            println!(
-                "engine: could not create engine for {}: {}",
-                model_type, e
-            );
+            println!("engine: could not create engine for {}: {}", model_type, e);
             return None;
         }
     };

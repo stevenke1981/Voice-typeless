@@ -7,7 +7,7 @@
 
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
 // Model manifest
@@ -89,7 +89,7 @@ pub fn is_downloadable(model_id: &str) -> bool {
 ///
 /// Returns the path to the downloaded model directory on success.
 pub fn download_model<F>(
-    base_dir: &PathBuf,
+    base_dir: &Path,
     model_id: &str,
     mut on_progress: F,
 ) -> Result<PathBuf, String>
@@ -119,10 +119,12 @@ where
         }
 
         // Try primary URL first, then fallback
-        let response = ureq::get(mf.url)
-            .call()
-            .or_else(|_| ureq::get(mf.fallback_url).call())
-            .map_err(|e| format!("failed to download {}: {e}", mf.local_name))?;
+        let response = match ureq::get(mf.url).call() {
+            Ok(response) => response,
+            Err(_) => ureq::get(mf.fallback_url)
+                .call()
+                .map_err(|e| format!("failed to download {}: {e}", mf.local_name))?,
+        };
 
         // Determine total size from Content-Length header
         let total_size: u64 = response

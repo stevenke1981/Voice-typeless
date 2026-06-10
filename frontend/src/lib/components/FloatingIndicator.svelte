@@ -6,7 +6,7 @@
    * appState.status.  Position is persisted to localStorage so it survives
    * page reloads and app restarts.
    *
-   * Design spec (agents.md):
+   * Design spec (docs/agent.md):
    *  - Semi-transparent dark pill (#1F1F25, 90 % opacity + backdrop-filter)
    *  - VTL teal border + glow when recording
    *  - 3-bar animated sound wave, pulsing via CSS keyframes
@@ -94,6 +94,22 @@
   function onMouseUp() {
     dragging = false;
   }
+
+  function onKeyDown(e: KeyboardEvent) {
+    const step = e.shiftKey ? 20 : 5;
+    let { x, y } = pos;
+    if (e.key === 'ArrowLeft') x -= step;
+    else if (e.key === 'ArrowRight') x += step;
+    else if (e.key === 'ArrowUp') y -= step;
+    else if (e.key === 'ArrowDown') y += step;
+    else return;
+
+    e.preventDefault();
+    pos = {
+      x: Math.max(0, Math.min(window.innerWidth - 200, x)),
+      y: Math.max(0, Math.min(window.innerHeight - 48, y)),
+    };
+  }
 </script>
 
 <!-- Capture mouse events globally so dragging works even outside the element -->
@@ -104,7 +120,8 @@
     role="status" + aria-live="polite" so screen readers announce
     status changes without interrupting ongoing speech.
   -->
-  <div
+  <button
+    type="button"
     class="vtl-indicator"
     class:recording={isRecording()}
     class:processing={appState.status === 'processing'}
@@ -112,7 +129,7 @@
     class:dragging
     style="left: {pos.x}px; top: {pos.y}px;"
     onmousedown={onMouseDown}
-    role="status"
+    onkeydown={onKeyDown}
     aria-live="polite"
     aria-label="Voice-typeless recording indicator: {appState.status}"
     aria-atomic="true"
@@ -137,7 +154,7 @@
         Error
       </span>
     {/if}
-  </div>
+  </button>
 {/if}
 
 <style>

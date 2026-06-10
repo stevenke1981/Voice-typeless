@@ -1,5 +1,5 @@
-pub mod types;
 pub mod traits;
+pub mod types;
 
 #[cfg(feature = "engine-sensevoice")]
 pub mod sensevoice;
@@ -9,11 +9,11 @@ pub mod whisper_cpp;
 
 // ── Re-exports ──
 
-pub use types::*;
 pub use traits::Engine;
+pub use types::*;
 
 #[cfg(feature = "engine-sensevoice")]
-pub use sensevoice::{SenseVoiceEngine, clean_sensevoice_text};
+pub use sensevoice::{clean_sensevoice_text, SenseVoiceEngine};
 
 #[cfg(feature = "engine-whisper-cpp")]
 pub use whisper_cpp::WhisperCppEngine;
@@ -22,7 +22,6 @@ pub use whisper_cpp::WhisperCppEngine;
 
 /// Probe the system for the best available compute device.
 ///
-/// Port of Go `ProbeDevice()` from `core/engine/device.go`.
 /// Uses DirectML on Windows, CPU fallback elsewhere.
 pub fn probe_device() -> DeviceType {
     #[cfg(target_os = "windows")]
@@ -39,7 +38,7 @@ pub fn probe_device() -> DeviceType {
 
 /// Create a new engine for the given model type.
 ///
-/// Port of Go `New()` from `core/engine/engine.go`.
+/// Create an engine implementation for the requested model type.
 pub fn new_engine(model_type: ModelType) -> Result<Box<dyn Engine>, EngineError> {
     match model_type {
         #[cfg(feature = "engine-sensevoice")]

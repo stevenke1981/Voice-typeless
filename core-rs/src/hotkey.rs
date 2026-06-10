@@ -29,27 +29,43 @@ impl Modifier {
 
     fn names(self) -> Vec<&'static str> {
         let mut v = Vec::with_capacity(4);
-        if self.contains(Modifier::CTRL) { v.push("Ctrl"); }
-        if self.contains(Modifier::SHIFT) { v.push("Shift"); }
-        if self.contains(Modifier::ALT) { v.push("Alt"); }
-        if self.contains(Modifier::SUPER) { v.push("Super"); }
+        if self.contains(Modifier::CTRL) {
+            v.push("Ctrl");
+        }
+        if self.contains(Modifier::SHIFT) {
+            v.push("Shift");
+        }
+        if self.contains(Modifier::ALT) {
+            v.push("Alt");
+        }
+        if self.contains(Modifier::SUPER) {
+            v.push("Super");
+        }
         v
     }
 }
 
 impl std::ops::BitOr for Modifier {
     type Output = Modifier;
-    fn bitor(self, rhs: Modifier) -> Modifier { Modifier(self.0 | rhs.0) }
+    fn bitor(self, rhs: Modifier) -> Modifier {
+        Modifier(self.0 | rhs.0)
+    }
 }
 
 impl std::ops::BitOrAssign for Modifier {
-    fn bitor_assign(&mut self, rhs: Modifier) { self.0 |= rhs.0; }
+    fn bitor_assign(&mut self, rhs: Modifier) {
+        self.0 |= rhs.0;
+    }
 }
 
 impl fmt::Display for Modifier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = self.names().join("|");
-        if s.is_empty() { write!(f, "None") } else { write!(f, "{s}") }
+        if s.is_empty() {
+            write!(f, "None")
+        } else {
+            write!(f, "{s}")
+        }
     }
 }
 
@@ -65,7 +81,10 @@ pub struct KeyCombo {
 
 impl KeyCombo {
     pub fn new(modifiers: Modifier, key: impl Into<String>) -> Self {
-        KeyCombo { modifiers, key: key.into() }
+        KeyCombo {
+            modifiers,
+            key: key.into(),
+        }
     }
 }
 
@@ -196,7 +215,9 @@ pub fn parse_key_combo(s: &str) -> Result<KeyCombo, HotkeyError> {
     }
 
     // Edge case: "Ctrl+" — trailing plus with empty last token
-    if parts.len() >= 2 && parts.last().map_or(true, |p| p.is_empty()) {
+    if parts.len() >= 2
+        && (parts.last().is_none() || parts.last().is_some_and(|part| part.is_empty()))
+    {
         return Err(HotkeyError::NoKeySpecified(trimmed.to_string()));
     }
 
@@ -222,7 +243,7 @@ pub fn parse_key_combo(s: &str) -> Result<KeyCombo, HotkeyError> {
                 ));
             }
         };
-        modifiers = modifiers | m;
+        modifiers |= m;
     }
 
     let key = parts.last().map(|s| s.to_string()).unwrap_or_default();
@@ -286,7 +307,10 @@ mod tests {
     #[test]
     fn test_parse_empty_error() {
         assert!(matches!(parse_key_combo(""), Err(HotkeyError::EmptyCombo)));
-        assert!(matches!(parse_key_combo("   "), Err(HotkeyError::EmptyCombo)));
+        assert!(matches!(
+            parse_key_combo("   "),
+            Err(HotkeyError::EmptyCombo)
+        ));
     }
 
     #[test]

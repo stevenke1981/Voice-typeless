@@ -19,14 +19,19 @@ pub struct ModelInfo {
 fn model_on_disk(config_models_dir: &str, model_id: &str) -> bool {
     // Check config-specified directory first
     if !config_models_dir.is_empty() {
-        let p = Path::new(config_models_dir).join(model_id).join("model.int8.onnx");
+        let p = Path::new(config_models_dir)
+            .join(model_id)
+            .join("model.int8.onnx");
         if p.exists() {
             return true;
         }
     }
     // Check a few known fallback locations
     for base in &[".", "..", "../.."] {
-        let p = Path::new(base).join("models").join(model_id).join("model.int8.onnx");
+        let p = Path::new(base)
+            .join("models")
+            .join(model_id)
+            .join("model.int8.onnx");
         if let Ok(canon) = p.canonicalize() {
             if canon.exists() {
                 return true;

@@ -38,15 +38,6 @@ Write-Host ""
 Write-Host "  Configuring MSVC build environment..." -ForegroundColor Cyan
 . "$PSScriptRoot\env-msvc.ps1"
 
-# ── Go ──────────────────────────────────────────────────────────────────────
-$hasGo = Check "Go 1.23+" "go version"
-if (-not $hasGo) {
-    TryInstall "Go" "GoLang.Go" "golang" "https://go.dev/dl/"
-    # Refresh PATH after install
-    $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "User")
-    $hasGo = Check "Go (after install)" "go version"
-}
-
 # ── Rust/Cargo ──────────────────────────────────────────────────────────────
 $hasRust = Check "Rust/Cargo" "cargo --version"
 if (-not $hasRust) {
@@ -94,5 +85,4 @@ if (-not $ok) {
 }
 Write-Host "  All prerequisites satisfied!" -ForegroundColor Green
 Write-Host "  Run 'make dev' or 'scripts/dev.ps1' to start development." -ForegroundColor Cyan
-Write-Host "  NOTE: Go is required to build core/. Install from https://go.dev/dl/ if missing." -ForegroundColor Yellow
 Write-Host ""

@@ -5,12 +5,15 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use tauri::{Emitter, State};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
-use vtl_core::audio::{AudioChunk, AudioError, AudioPlayer, AudioRecorder, DeviceEnumerator, Enumerator, RecorderConfig};
+use vtl_core::audio::{
+    AudioChunk, AudioError, AudioPlayer, AudioRecorder, DeviceEnumerator, Enumerator,
+    RecorderConfig,
+};
 use vtl_core::config::AppConfig;
 
+use enigo::Keyboard as _;
 use vtl_core::history::HistoryItem;
 use vtl_core::paste::write_clipboard;
-use enigo::Keyboard as _;
 
 use crate::config_helpers::*;
 use crate::history_io::save_history;
@@ -28,7 +31,8 @@ pub fn start_recording(
 
     // REQUIRE engine to be loaded — no engine means no point recording.
     if s.engine.is_none() {
-        let msg = "Model not loaded yet. Please wait for the model to download, then try again.".to_string();
+        let msg = "Model not loaded yet. Please wait for the model to download, then try again."
+            .to_string();
         return Err(msg);
     }
 
@@ -148,8 +152,11 @@ pub fn stop_recording(
     } else {
         0
     };
-    app.emit("recording-stopped", serde_json::json!({"duration_ms": duration_ms}))
-        .map_err(|e| e.to_string())?;
+    app.emit(
+        "recording-stopped",
+        serde_json::json!({"duration_ms": duration_ms}),
+    )
+    .map_err(|e| e.to_string())?;
 
     let (text, language, confidence) = match recognition {
         Some(r) => (r.text, r.language, r.confidence),
@@ -235,10 +242,7 @@ pub fn get_model_list(state: State<'_, Mutex<AppState>>) -> Result<Vec<ModelInfo
 }
 
 #[tauri::command]
-pub fn set_active_model(
-    state: State<'_, Mutex<AppState>>,
-    model_id: String,
-) -> Result<(), String> {
+pub fn set_active_model(state: State<'_, Mutex<AppState>>, model_id: String) -> Result<(), String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
     s.config.model.active_model_id = model_id;
     vtl_core::config::save(&s.config).map_err(|e| e.to_string())
@@ -255,10 +259,7 @@ pub fn get_history(
 }
 
 #[tauri::command]
-pub fn delete_history_item(
-    state: State<'_, Mutex<AppState>>,
-    id: String,
-) -> Result<(), String> {
+pub fn delete_history_item(state: State<'_, Mutex<AppState>>, id: String) -> Result<(), String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
     s.history.retain(|item| item.id != id);
     let path = s.history_path.clone();
@@ -283,7 +284,14 @@ pub fn export_history_text(state: State<'_, Mutex<AppState>>) -> Result<String, 
         .history
         .iter()
         .enumerate()
-        .map(|(i, item)| format!("{}. [{}] {}", i + 1, item.language.to_uppercase(), item.text))
+        .map(|(i, item)| {
+            format!(
+                "{}. [{}] {}",
+                i + 1,
+                item.language.to_uppercase(),
+                item.text
+            )
+        })
         .collect();
     Ok(lines.join("\n\n"))
 }
@@ -293,8 +301,7 @@ pub fn get_stats(state: State<'_, Mutex<AppState>>) -> Result<serde_json::Value,
     let s = state.lock().map_err(|e| e.to_string())?;
     let total_items = s.history.len();
     let total_chars: usize = s.history.iter().map(|item| item.text.chars().count()).sum();
-    let mut languages: std::collections::HashMap<String, usize> =
-        std::collections::HashMap::new();
+    let mut languages: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for item in &s.history {
         *languages.entry(item.language.clone()).or_insert(0) += 1;
     }
@@ -312,10 +319,7 @@ pub fn get_config(state: State<'_, Mutex<AppState>>) -> Result<AppConfig, String
 }
 
 #[tauri::command]
-pub fn set_device(
-    state: State<'_, Mutex<AppState>>,
-    device: String,
-) -> Result<(), String> {
+pub fn set_device(state: State<'_, Mutex<AppState>>, device: String) -> Result<(), String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
     s.config.audio.device_id = device;
     vtl_core::config::save(&s.config).map_err(|e| e.to_string())
@@ -495,9 +499,7 @@ pub struct EngineStatus {
 }
 
 #[tauri::command]
-pub fn get_engine_status(
-    state: State<'_, Mutex<AppState>>,
-) -> Result<EngineStatus, String> {
+pub fn get_engine_status(state: State<'_, Mutex<AppState>>) -> Result<EngineStatus, String> {
     let s = state.lock().map_err(|e| e.to_string())?;
     Ok(EngineStatus {
         loaded: s.engine.is_some(),

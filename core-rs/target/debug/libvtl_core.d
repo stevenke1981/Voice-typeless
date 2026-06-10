@@ -1,1 +1,0 @@
-D:\Voice-typeless\core-rs\target\debug\libvtl_core.rlib: D:\Voice-typeless\core-rs\src\audio.rs D:\Voice-typeless\core-rs\src\config.rs D:\Voice-typeless\core-rs\src\engine.rs D:\Voice-typeless\core-rs\src\history.rs D:\Voice-typeless\core-rs\src\hotkey.rs D:\Voice-typeless\core-rs\src\lib.rs D:\Voice-typeless\core-rs\src\paste.rs D:\Voice-typeless\core-rs\src\processor.rs

@@ -2,15 +2,13 @@ use std::fmt;
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
+use crate::engine::traits::Engine;
 use crate::engine::types::{
     DeviceType, EngineError, ModelConfig, ModelInfo, ModelType, RecognitionResult, Segment,
 };
-use crate::engine::traits::Engine;
 
 #[cfg(feature = "engine-whisper-cpp")]
-use whisper_rs::{
-    FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters,
-};
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 /// Whisper.cpp engine implementation backed by `whisper-rs`.
 ///
@@ -95,11 +93,13 @@ impl Engine for WhisperCppEngine {
         let ctx_params = WhisperContextParameters::default();
 
         // Load the model
-        let ctx = WhisperContext::new_with_params(&self.cfg.model_path, ctx_params)
-            .map_err(|e| EngineError::ModelLoadError(format!(
-                "whisper-rs: failed to create context from '{}': {}",
-                self.cfg.model_path, e
-            )))?;
+        let ctx =
+            WhisperContext::new_with_params(&self.cfg.model_path, ctx_params).map_err(|e| {
+                EngineError::ModelLoadError(format!(
+                    "whisper-rs: failed to create context from '{}': {}",
+                    self.cfg.model_path, e
+                ))
+            })?;
 
         self.ctx = Some(ctx);
         Ok(())
@@ -110,10 +110,7 @@ impl Engine for WhisperCppEngine {
         audio: &[f32],
         sample_rate: u32,
     ) -> Result<RecognitionResult, EngineError> {
-        let ctx = self
-            .ctx
-            .as_ref()
-            .ok_or(EngineError::ModelNotLoaded)?;
+        let ctx = self.ctx.as_ref().ok_or(EngineError::ModelNotLoaded)?;
 
         // Create a processing state from the context
         let mut state = ctx
@@ -171,8 +168,7 @@ impl Engine for WhisperCppEngine {
         }
 
         // Calculate audio duration
-        let audio_duration =
-            Duration::from_secs_f32(audio.len() as f32 / sample_rate as f32);
+        let audio_duration = Duration::from_secs_f32(audio.len() as f32 / sample_rate as f32);
 
         // Determine confidence:
         // whisper-rs does not expose per-token probability on the Rust API.

@@ -4,11 +4,11 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
-// Configuration structs — mirrors core/config/config.go
+// Application configuration shared by the reusable core and Tauri layer.
 // ---------------------------------------------------------------------------
 
 /// Complete application configuration schema.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", default)]
 pub struct AppConfig {
     pub hotkey: HotkeyConfig,
@@ -168,19 +168,6 @@ impl Default for SystemConfig {
     }
 }
 
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            hotkey: HotkeyConfig::default(),
-            audio: AudioConfig::default(),
-            model: ModelConfig::default(),
-            text: TextConfig::default(),
-            ui: UIConfig::default(),
-            system: SystemConfig::default(),
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Error type
 // ---------------------------------------------------------------------------
@@ -255,9 +242,8 @@ fn config_path() -> Result<PathBuf, ConfigError> {
         }
     }
 
-    let base = dirs::config_dir().ok_or_else(|| {
-        ConfigError::NoConfigDir("no OS config directory found".into())
-    })?;
+    let base = dirs::config_dir()
+        .ok_or_else(|| ConfigError::NoConfigDir("no OS config directory found".into()))?;
     Ok(base.join("VoiceTypeless").join("config.json"))
 }
 

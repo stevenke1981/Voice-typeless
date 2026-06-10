@@ -1,10 +1,10 @@
+pub mod commands;
 pub mod config_helpers;
+pub mod engine_loader;
+pub mod history_io;
+pub mod model_downloader;
 pub mod model_info;
 pub mod state;
-pub mod history_io;
-pub mod engine_loader;
-pub mod model_downloader;
-pub mod commands;
 
 use std::path::PathBuf;
 use std::str::FromStr;

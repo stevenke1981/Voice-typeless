@@ -1,7 +1,7 @@
 use cpal::traits::{DeviceTrait, HostTrait};
 
-use crate::audio::types::{AudioError, DeviceInfo};
 use crate::audio::traits::DeviceEnumerator;
+use crate::audio::types::{AudioError, DeviceInfo};
 
 /// Device enumerator backed by cpal.
 pub struct Enumerator;
@@ -60,11 +60,8 @@ impl DeviceEnumerator for Enumerator {
             .map_err(|e| AudioError::DeviceError(e.to_string()))?;
 
         let devices = self.list_input_devices()?;
-        devices
-            .into_iter()
-            .find(|d| d.id == name)
-            .ok_or_else(|| {
-                AudioError::DeviceError("default device not found in device list".to_string())
-            })
+        devices.into_iter().find(|d| d.id == name).ok_or_else(|| {
+            AudioError::DeviceError("default device not found in device list".to_string())
+        })
     }
 }

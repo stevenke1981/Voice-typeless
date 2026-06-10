@@ -18,8 +18,8 @@ use vtl_core::engine::Engine;
 /// test crate's `Cargo.toml` (i.e. `core-rs/`). The models live in the
 /// workspace root's `models/` directory, one level up.
 fn model_dir() -> PathBuf {
-    let manifest = std::env::var("CARGO_MANIFEST_DIR")
-        .expect("CARGO_MANIFEST_DIR must be set (set by Cargo)");
+    let manifest =
+        std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set (set by Cargo)");
     Path::new(&manifest)
         .parent()
         .expect("core-rs should have a parent (workspace root)")
@@ -35,18 +35,14 @@ fn read_wav_samples(path: &Path) -> (Vec<f32>, u32) {
     let mut reader = hound::WavReader::open(path).expect("failed to open WAV file");
     let spec = reader.spec();
     assert_eq!(
-        spec.channels,
-        1,
+        spec.channels, 1,
         "test WAV must be mono; {:?} has {} channels",
-        path,
-        spec.channels
+        path, spec.channels
     );
     assert_eq!(
-        spec.bits_per_sample,
-        16,
+        spec.bits_per_sample, 16,
         "test WAV must be 16-bit PCM; {:?} is {} bit",
-        path,
-        spec.bits_per_sample
+        path, spec.bits_per_sample
     );
 
     let sample_rate = spec.sample_rate;
@@ -56,7 +52,11 @@ fn read_wav_samples(path: &Path) -> (Vec<f32>, u32) {
         .map(|s| s.expect("failed to read WAV sample") as f32 / 32768.0)
         .collect();
 
-    assert!(!samples.is_empty(), "WAV file {:?} contains no samples", path);
+    assert!(
+        !samples.is_empty(),
+        "WAV file {:?} contains no samples",
+        path
+    );
     (samples, sample_rate)
 }
 
@@ -79,11 +79,7 @@ fn test_sensevoice_load_and_recognize_zh() {
         "Tokens file not found at {:?}",
         tokens_path
     );
-    assert!(
-        test_wav.exists(),
-        "Test WAV not found at {:?}",
-        test_wav
-    );
+    assert!(test_wav.exists(), "Test WAV not found at {:?}", test_wav);
 
     // ── Read test audio ─────────────────────────────────────────────
     let (samples, sample_rate) = read_wav_samples(&test_wav);
@@ -111,7 +107,10 @@ fn test_sensevoice_load_and_recognize_zh() {
         .load_model(cfg)
         .expect("SenseVoice load_model() should succeed with valid model files");
 
-    assert!(engine.is_loaded(), "Engine should report loaded after load_model()");
+    assert!(
+        engine.is_loaded(),
+        "Engine should report loaded after load_model()"
+    );
 
     // ── Run recognition ──────────────────────────────────────────────
     let result = engine
@@ -163,11 +162,19 @@ fn test_sensevoice_recognize_en() {
     };
     engine.load_model(cfg).expect("load_model() should succeed");
 
-    let result = engine.recognize(&samples, sample_rate).expect("recognize() should succeed");
-    assert!(!result.text.is_empty(), "English recognition should produce text");
+    let result = engine
+        .recognize(&samples, sample_rate)
+        .expect("recognize() should succeed");
+    assert!(
+        !result.text.is_empty(),
+        "English recognition should produce text"
+    );
     // When language is "auto", the result language may stay "auto" even though
     // the model correctly detected and transcribed English internally.
-    eprintln!("✓ Recognized (en): {} [lang={}]", result.text, result.language);
+    eprintln!(
+        "✓ Recognized (en): {} [lang={}]",
+        result.text, result.language
+    );
 }
 
 #[test]
@@ -193,8 +200,13 @@ fn test_sensevoice_recognize_ja() {
     };
     engine.load_model(cfg).expect("load_model() should succeed");
 
-    let result = engine.recognize(&samples, sample_rate).expect("recognize() should succeed");
-    assert!(!result.text.is_empty(), "Japanese recognition should produce text");
+    let result = engine
+        .recognize(&samples, sample_rate)
+        .expect("recognize() should succeed");
+    assert!(
+        !result.text.is_empty(),
+        "Japanese recognition should produce text"
+    );
     eprintln!("✓ Recognized (ja): {}", result.text);
 }
 
@@ -221,8 +233,13 @@ fn test_sensevoice_recognize_ko() {
     };
     engine.load_model(cfg).expect("load_model() should succeed");
 
-    let result = engine.recognize(&samples, sample_rate).expect("recognize() should succeed");
-    assert!(!result.text.is_empty(), "Korean recognition should produce text");
+    let result = engine
+        .recognize(&samples, sample_rate)
+        .expect("recognize() should succeed");
+    assert!(
+        !result.text.is_empty(),
+        "Korean recognition should produce text"
+    );
     eprintln!("✓ Recognized (ko): {}", result.text);
 }
 
@@ -249,7 +266,12 @@ fn test_sensevoice_recognize_yue() {
     };
     engine.load_model(cfg).expect("load_model() should succeed");
 
-    let result = engine.recognize(&samples, sample_rate).expect("recognize() should succeed");
-    assert!(!result.text.is_empty(), "Cantonese recognition should produce text");
+    let result = engine
+        .recognize(&samples, sample_rate)
+        .expect("recognize() should succeed");
+    assert!(
+        !result.text.is_empty(),
+        "Cantonese recognition should produce text"
+    );
     eprintln!("✓ Recognized (yue): {}", result.text);
 }

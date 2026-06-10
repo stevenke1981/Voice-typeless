@@ -1,10 +1,10 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, atomic::AtomicUsize};
+use std::sync::{atomic::AtomicUsize, Arc, Mutex};
 
 use cpal::traits::{DeviceTrait, HostTrait};
 
-use crate::audio::types::AudioError;
 use crate::audio::traits::AudioPlayer;
+use crate::audio::types::AudioError;
 
 /// Generate a short decaying sine tone (marimba-like) at the given sample rate.
 fn generate_marimba_tone(sample_rate: u32, volume: f64) -> Vec<f32> {

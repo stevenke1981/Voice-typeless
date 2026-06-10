@@ -106,6 +106,8 @@
     cancel:      'Cancel',
   };
 
+  const HOTKEY_ACTIONS = ['push_to_talk', 'free_speech', 'cancel'] as const;
+
   /** True briefly after each hotkey event (self-clears after 1.5 s). */
   let hotkeyFlash = $state(false);
 
@@ -138,7 +140,7 @@
   class:status-error={appState.status === 'error'}
 >
   <!-- ── Top navigation bar ────────────────────────────────────────────── -->
-  <header class="app-header" role="banner">
+  <header class="app-header">
     <!-- Logo -->
     <div class="logo" aria-label="Voice-typeless">
       <span class="logo-mark" aria-hidden="true">
@@ -199,7 +201,7 @@
   </main>
 
   <!-- ── Status footer ─────────────────────────────────────────────────── -->
-  <footer class="app-footer" role="contentinfo">
+  <footer class="app-footer">
     <!-- Live region for status changes, polled by screen readers -->
     <div
       class="status-indicator"
@@ -244,7 +246,7 @@
 
       <!-- Registered hotkey combos (color-coded by registration status) -->
       <span class="hkdebug-combos" title="Registered hotkeys">
-        {#each ['push_to_talk', 'free_speech', 'cancel'] as action}
+        {#each HOTKEY_ACTIONS as action}
           {@const reg = appState.hotkeyRegistration[action]}
           {@const hk = appState.hotkeyConfig[action]}
           <span

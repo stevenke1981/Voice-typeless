@@ -28,7 +28,6 @@ it was used.
 |-------------|---------|-------|
 | [Rust + Cargo](https://rustup.rs) | 1.77+ | MSVC toolchain on Windows |
 | [Node.js](https://nodejs.org) | 18+ | |
-| [Go](https://go.dev) | 1.23+ | |
 | VS 2019 Build Tools | MSVC 14.29 | See note below |
 
 > **Windows toolchain note**: Use VS 2019 Build Tools (MSVC 14.29). MSVC 14.50 (VS 2025)
@@ -45,10 +44,10 @@ it was used.
 cd frontend && npm install && cd ..
 
 # 3. Start development mode (hot-reload Tauri + Svelte)
-cargo tauri dev
+.\scripts\dev.ps1
 
 # 4. Build the production installer
-cargo tauri build
+.\build\build-win.ps1
 # Installer output: src-tauri\target\release\bundle\nsis\
 ```
 
@@ -69,16 +68,16 @@ cargo tauri build
 | 9 | **Windows Autostart** | Optional launch-at-startup via `HKCU\...\Run` registry key |
 | 10 | **System Tray** | Minimize to tray with Show/Hide and Quit items in the tray context menu |
 
-### Future — Speech Integration
+### Speech Pipeline
 
 | Feature | Status |
 |---------|--------|
-| Global hotkey push-to-talk & free-speech | 🔜 In design |
-| Offline speech recognition via SenseVoice | 🔜 Requires Go Core integration |
-| Whisper-tiny model support | 🔜 Planned |
+| Global hotkey push-to-talk & free-speech | Implemented |
+| Offline speech recognition via SenseVoice | Implemented in `vtl-core` |
+| Audio capture, VAD auto-stop, and cancellation | Implemented |
+| Clipboard-safe auto-paste | Implemented |
+| Whisper.cpp model support | Optional Cargo feature |
 | GPU acceleration (DirectML / CUDA) | 🔜 Planned |
-| Auto-paste transcription to active app | 🔜 Planned |
-| Voice Activity Detection (VAD) auto-stop | 🔜 Planned |
 | Plugin system (JS / Lua transform scripts) | 🔜 Planned |
 | Windows 7 compatibility build | 🔜 Planned |
 
@@ -93,7 +92,8 @@ cargo tauri build
 | **Audio I/O** | malgo (miniaudio Rust bindings) | Microphone capture at 16 kHz mono |
 
 The Tauri commands call `vtl-core` functions directly — no sidecar process, no IPC
-serialisation. For full design details see [`docs/architecture.md`](docs/architecture.md).
+serialisation. For full design details see [`docs/architecture.md`](docs/architecture.md)
+and the generated [`docs/knowledge-graph.md`](docs/knowledge-graph.md).
 
 ## Configuration & Data Storage
 
@@ -117,7 +117,7 @@ parameters, return types, and error codes.
 
 1. Fork the repository and clone it locally
 2. Create a feature branch: `git checkout -b feat/your-feature`
-3. Follow the [architecture design](docs/architecture.md) — keep the layer boundaries clean
+3. Read the [agent specification](docs/agent.md) and [architecture design](docs/architecture.md)
 4. Test your changes with `cargo tauri dev`
 5. Open a pull request with a clear description of what changed and why
 

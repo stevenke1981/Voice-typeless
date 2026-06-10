@@ -1,4 +1,5 @@
 //! Quick hardware audio capture test.
+#![allow(unused_crate_dependencies)]
 //!
 //! Run manually: cargo test --test audio_capture_test -- --nocapture --ignored
 //!
@@ -20,23 +21,30 @@ fn test_hardware_audio_capture() {
 
     println!("Starting recording...");
     recorder.start(cfg).expect("start_recording failed");
-    
+
     // Record for 2 seconds
     std::thread::sleep(Duration::from_secs(2));
-    
+
     println!("Stopping recording...");
     recorder.stop().expect("stop_recording failed");
-    
+
     let chunk = recorder.drain().expect("drain failed");
     let duration_ms = (chunk.samples.len() as u64 * 1000) / chunk.sample_rate as u64;
-    
+
     println!(
         "Captured: samples={}, rate={}Hz, duration={}ms",
         chunk.samples.len(),
         chunk.sample_rate,
         duration_ms,
     );
-    
-    assert!(chunk.samples.len() > 0, "Expected >0 samples but got 0 — audio capture not working!");
-    assert!(duration_ms >= 500, "Expected at least 500ms of audio, got {}ms", duration_ms);
+
+    assert!(
+        !chunk.samples.is_empty(),
+        "Expected >0 samples but got 0 — audio capture not working!"
+    );
+    assert!(
+        duration_ms >= 500,
+        "Expected at least 500ms of audio, got {}ms",
+        duration_ms
+    );
 }

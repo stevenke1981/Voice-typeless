@@ -1,10 +1,10 @@
 //! Post-processing transformations for raw recognition text.
 //!
-//! This module mirrors `core/processor/` from the Go implementation and
-//! provides filler-word removal, mixed-language normalisation, custom
+//! Provides filler-word removal, mixed-language normalisation, custom
 //! dictionary replacement, and sentence capitalisation.
 
 use std::collections::HashMap;
+use std::convert::Infallible;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -61,7 +61,15 @@ fn default_filler_words() -> HashMap<&'static str, &'static [&'static str]> {
     m.insert(
         "en",
         &[
-            "uh", "um", "er", "ah", "like", "you know", "i mean", "basically", "literally",
+            "uh",
+            "um",
+            "er",
+            "ah",
+            "like",
+            "you know",
+            "i mean",
+            "basically",
+            "literally",
         ],
     );
     m.insert("ja", &["えーと", "あのー", "まあ", "ちょっと"]);
@@ -224,7 +232,11 @@ impl TextProcessor {
     /// Applies the full configured pipeline to `raw` recognised text.
     ///
     /// `config_override` overrides the instance config for this single call.
-    pub fn process(&self, raw: &str, config_override: &ProcessorConfig) -> Result<String, ()> {
+    pub fn process(
+        &self,
+        raw: &str,
+        config_override: &ProcessorConfig,
+    ) -> Result<String, Infallible> {
         let mut text = raw.trim().to_string();
         if text.is_empty() {
             return Ok(String::new());
@@ -359,7 +371,10 @@ mod tests {
         };
         let got = p.process("hello world", &cfg).unwrap();
         assert!(!got.is_empty());
-        assert!(got.starts_with('H'), "expected capitalized first letter, got: {got:?}");
+        assert!(
+            got.starts_with('H'),
+            "expected capitalized first letter, got: {got:?}"
+        );
     }
 
     #[test]

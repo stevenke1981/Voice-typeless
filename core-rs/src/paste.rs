@@ -1,7 +1,6 @@
 //! Clipboard paste operations — Win32 implementation.
 //!
-//! This module mirrors `core/paste/` from the Go implementation and
-//! provides the paste-method abstraction, a clipboard guard for
+//! Provides the paste-method abstraction, a clipboard guard for
 //! save/restore semantics, and platform-specific clipboard I/O
 //! via Win32 `OpenClipboard` / `SetClipboardData` (Windows)
 //! or no-op stubs (other platforms).
@@ -107,6 +106,7 @@ fn with_clipboard_lock<T>(f: impl FnOnce() -> T) -> T {
 }
 
 #[cfg(windows)]
+#[allow(clippy::upper_case_acronyms)] // Match Win32 API type names at the FFI boundary.
 mod clipboard_sys {
     use super::PasteError;
     use std::ffi::c_void;
@@ -136,9 +136,7 @@ mod clipboard_sys {
     pub fn read_text() -> Result<String, PasteError> {
         unsafe {
             if OpenClipboard(ptr::null_mut()) == 0 {
-                return Err(PasteError::ClipboardError(
-                    "OpenClipboard failed".into(),
-                ));
+                return Err(PasteError::ClipboardError("OpenClipboard failed".into()));
             }
 
             let handle = GetClipboardData(CF_UNICODETEXT);
@@ -150,9 +148,7 @@ mod clipboard_sys {
             let ptr = GlobalLock(handle) as *const u16;
             if ptr.is_null() {
                 CloseClipboard();
-                return Err(PasteError::ClipboardError(
-                    "GlobalLock failed".into(),
-                ));
+                return Err(PasteError::ClipboardError("GlobalLock failed".into()));
             }
 
             // Find null-terminator position
@@ -171,40 +167,31 @@ mod clipboard_sys {
     /// Write Unicode text to the system clipboard via Win32 API.
     pub fn write_text(text: &str) -> Result<(), PasteError> {
         unsafe {
-            let utf16: Vec<u16> =
-                text.encode_utf16().chain(std::iter::once(0)).collect();
+            let utf16: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
             let byte_size = utf16.len() * 2; // u16 = 2 bytes
 
             let hmem = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, byte_size);
             if hmem.is_null() {
-                return Err(PasteError::ClipboardError(
-                    "GlobalAlloc failed".into(),
-                ));
+                return Err(PasteError::ClipboardError("GlobalAlloc failed".into()));
             }
 
             let ptr = GlobalLock(hmem) as *mut u16;
             if ptr.is_null() {
                 GlobalFree(hmem);
-                return Err(PasteError::ClipboardError(
-                    "GlobalLock failed".into(),
-                ));
+                return Err(PasteError::ClipboardError("GlobalLock failed".into()));
             }
             ptr::copy_nonoverlapping(utf16.as_ptr(), ptr, utf16.len());
             GlobalUnlock(hmem);
 
             if OpenClipboard(ptr::null_mut()) == 0 {
                 GlobalFree(hmem);
-                return Err(PasteError::ClipboardError(
-                    "OpenClipboard failed".into(),
-                ));
+                return Err(PasteError::ClipboardError("OpenClipboard failed".into()));
             }
             EmptyClipboard();
             let result = SetClipboardData(CF_UNICODETEXT, hmem);
             CloseClipboard();
             if result.is_null() {
-                return Err(PasteError::ClipboardError(
-                    "SetClipboardData failed".into(),
-                ));
+                return Err(PasteError::ClipboardError("SetClipboardData failed".into()));
             }
             Ok(())
         }
@@ -233,7 +220,7 @@ mod clipboard_sys {
 
 /// Reads the current text content from the system clipboard.
 pub fn read_clipboard() -> Result<String, PasteError> {
-    with_clipboard_lock(|| clipboard_sys::read_text())
+    with_clipboard_lock(clipboard_sys::read_text)
 }
 
 /// Writes text content to the system clipboard.
@@ -253,7 +240,7 @@ pub fn send_paste_keys() -> Result<(), PasteError> {
 #[cfg(not(windows))]
 pub fn send_paste_keys() -> Result<(), PasteError> {
     Err(PasteError::PasteFailed(
-        "keyboard paste requires platform-specific implementation; use Tauri-enigo layer".into()
+        "keyboard paste requires platform-specific implementation; use Tauri-enigo layer".into(),
     ))
 }
 

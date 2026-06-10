@@ -18,7 +18,7 @@ enigo = "0.3"
 log = "0.4"
 ureq = "2"
 
-# Core logic library — Rust rewrite of Go core/
+# Reusable core logic library
 vtl-core = { path = "../core-rs", features = ["engine-sensevoice"] }
 
 [target.'cfg(windows)'.dependencies]

@@ -28,6 +28,9 @@
 *.deb
 *.exe
 
+# Local agent artifacts
+/.opencode/images/
+
 # OS
 .DS_Store
 Thumbs.db

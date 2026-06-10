@@ -1,10 +1,10 @@
-.PHONY: dev build test clean setup install
+.PHONY: dev build test test-core test-frontend clean setup install
 
 # Install all dependencies (run once after cloning)
 install:
 	cd frontend && npm install
 
-# Start Tauri dev server (frontend + Rust shell, requires Go separately)
+# Start Tauri dev server (frontend + Rust shell)
 dev:
 	powershell -File scripts/dev.ps1
 
@@ -12,13 +12,15 @@ dev:
 setup:
 	powershell -File scripts/setup.ps1
 
-# Run Go core unit tests
+# Run the reusable Rust core tests
 test-core:
-	cd core && go test ./...
+	cd core-rs && cargo test
 
 # Run frontend type-check
 test-frontend:
 	cd frontend && npm run check
+
+test: test-core test-frontend
 
 # Build production bundle
 build:
@@ -28,4 +30,5 @@ build:
 # Clean build artifacts (Windows-safe)
 clean:
 	powershell -Command "if (Test-Path frontend/dist) { Remove-Item -Recurse -Force frontend/dist }; if (Test-Path frontend/node_modules) { Remove-Item -Recurse -Force frontend/node_modules }"
+	cd core-rs && cargo clean
 	cd src-tauri && cargo clean

@@ -1,7 +1,6 @@
 //! Persistence layer for recognition history using SQLite.
 //!
-//! Mirrors `core/history/` from the Go implementation.  The store is backed
-//! by a local SQLite database, stored at the OS-appropriate config path.
+//! The store is backed by a local SQLite database at the platform config path.
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -100,8 +99,7 @@ impl SqliteStore {
     }
 
     fn db_path() -> Result<PathBuf, HistoryError> {
-        let base =
-            dirs::config_dir().ok_or(HistoryError::NoConfigDir)?;
+        let base = dirs::config_dir().ok_or(HistoryError::NoConfigDir)?;
         Ok(base.join("VoiceTypeless").join("history.db"))
     }
 }

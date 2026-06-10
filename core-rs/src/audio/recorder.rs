@@ -4,8 +4,8 @@ use std::time::SystemTime;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-use crate::audio::types::{AudioChunk, AudioError, RecorderConfig, SAMPLE_RATE};
 use crate::audio::traits::AudioRecorder;
+use crate::audio::types::{AudioChunk, AudioError, RecorderConfig, SAMPLE_RATE};
 
 /// Shared state between the audio callback thread and the main thread.
 pub(crate) struct SharedState {
@@ -23,13 +23,12 @@ impl SharedState {
             sample_rate,
             captured_at: SystemTime::now(),
         };
-        self.subscribers.retain(|tx| {
-            match tx.try_send(chunk.clone()) {
+        self.subscribers
+            .retain(|tx| match tx.try_send(chunk.clone()) {
                 Ok(()) => true,
                 Err(std::sync::mpsc::TrySendError::Full(_)) => true,
                 Err(std::sync::mpsc::TrySendError::Disconnected(_)) => false,
-            }
-        });
+            });
     }
 }
 
@@ -132,10 +131,8 @@ impl Recorder {
                     let shared = Arc::clone(shared);
                     move |data: &[u16], _: &cpal::InputCallbackInfo| {
                         if let Ok(mut state) = shared.try_lock() {
-                            let converted: Vec<f32> = data
-                                .iter()
-                                .map(|&s| (s as f32 / 32768.0) - 1.0)
-                                .collect();
+                            let converted: Vec<f32> =
+                                data.iter().map(|&s| (s as f32 / 32768.0) - 1.0).collect();
                             state.push_samples(&converted, rate);
                         }
                     }
@@ -146,7 +143,9 @@ impl Recorder {
             _ => return Err(AudioError::FormatNotSupported),
         }
         .map_err(|e| AudioError::DeviceError(e.to_string()))?;
-        stream.play().map_err(|e| AudioError::DeviceError(format!("stream play failed: {e}")))?;
+        stream
+            .play()
+            .map_err(|e| AudioError::DeviceError(format!("stream play failed: {e}")))?;
 
         println!("[vtl] built input stream: {} Hz, fmt={:?}", rate, fmt);
         Ok((stream, rate))

@@ -2,21 +2,20 @@ use std::fmt;
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
+use crate::engine::probe_device;
+use crate::engine::traits::Engine;
 use crate::engine::types::{
     DeviceType, EngineError, ModelConfig, ModelInfo, ModelType, RecognitionResult, Segment,
 };
-use crate::engine::traits::Engine;
-use crate::engine::probe_device;
 
 #[cfg(feature = "engine-sensevoice")]
 use sherpa_onnx::{
-    OfflineModelConfig, OfflineRecognizer, OfflineRecognizerConfig,
-    OfflineSenseVoiceModelConfig,
+    OfflineModelConfig, OfflineRecognizer, OfflineRecognizerConfig, OfflineSenseVoiceModelConfig,
 };
 
 /// SenseVoice engine implementation backed by sherpa-onnx `OfflineRecognizer`.
 ///
-/// Port of Go `senseVoiceEngine` from `core/engine/sensevoice.go`.
+/// Offline SenseVoice engine backed by sherpa-onnx.
 #[cfg(feature = "engine-sensevoice")]
 pub struct SenseVoiceEngine {
     cfg: ModelConfig,
@@ -77,45 +76,48 @@ impl Engine for SenseVoiceEngine {
             cfg.device = probe_device();
         }
 
-        // Resolve thread count: default to half of available parallelism
+        // Resolve thread count: use all available parallelism
         if cfg.num_threads <= 0 {
             let count = std::thread::available_parallelism()
                 .map(NonZeroUsize::get)
                 .unwrap_or(4);
-            cfg.num_threads = std::cmp::max(1, count / 2) as i32;
+            cfg.num_threads = count as i32;
         }
 
         // Map device to sherpa-onnx provider string
         let provider = cfg.device.to_provider_str();
 
-        // Build sherpa-onnx config using Default builder pattern.
-        let mut recognizer_config = OfflineRecognizerConfig::default();
-        recognizer_config.model_config = OfflineModelConfig {
-            sense_voice: OfflineSenseVoiceModelConfig {
-                model: Some(cfg.model_path.clone()),
-                language: Some(cfg.language.clone()),
-                use_itn: true,
+        // Build sherpa-onnx config using the resolved runtime settings.
+        let recognizer_config = OfflineRecognizerConfig {
+            model_config: OfflineModelConfig {
+                sense_voice: OfflineSenseVoiceModelConfig {
+                    model: Some(cfg.model_path.clone()),
+                    language: Some(cfg.language.clone()),
+                    use_itn: true,
+                },
+                tokens: Some(cfg.tokens_path.clone()),
+                num_threads: cfg.num_threads,
+                provider: Some(provider.to_string()),
+                ..Default::default()
             },
-            tokens: Some(cfg.tokens_path.clone()),
-            num_threads: cfg.num_threads,
-            provider: Some(provider.to_string()),
+            decoding_method: Some("greedy_search".into()),
+            // Discourage blank/pad tokens to reduce false negatives.
+            blank_penalty: 0.1,
             ..Default::default()
         };
-        recognizer_config.decoding_method = Some("greedy_search".into());
 
         // Store config before attempting recognizer creation
         // so resolved device/threads are persisted even on failure
         self.cfg = cfg;
 
         // Create the recognizer
-        let recognizer = OfflineRecognizer::create(&recognizer_config)
-            .ok_or_else(|| {
-                let msg = format!(
-                    "failed to create OfflineRecognizer (model={}, tokens={}, provider={})",
-                    self.cfg.model_path, self.cfg.tokens_path, provider
-                );
-                EngineError::ModelLoadError(msg)
-            })?;
+        let recognizer = OfflineRecognizer::create(&recognizer_config).ok_or_else(|| {
+            let msg = format!(
+                "failed to create OfflineRecognizer (model={}, tokens={}, provider={})",
+                self.cfg.model_path, self.cfg.tokens_path, provider
+            );
+            EngineError::ModelLoadError(msg)
+        })?;
 
         self.recognizer = Some(recognizer);
         Ok(())
@@ -134,10 +136,16 @@ impl Engine for SenseVoiceEngine {
         // sherpa-onnx requires 16 kHz mono input — resample if needed
         const TARGET_RATE: u32 = 16000;
         let (waveform, used_rate) = if sample_rate != TARGET_RATE {
-            (resample_linear(audio, sample_rate, TARGET_RATE), TARGET_RATE)
+            (
+                resample_linear(audio, sample_rate, TARGET_RATE),
+                TARGET_RATE,
+            )
         } else {
             (audio.to_vec(), sample_rate)
         };
+
+        // Normalize audio to consistent peak level for better ASR accuracy
+        let waveform = normalize_loudness(&waveform);
 
         // Create an offline stream, feed audio, decode
         let stream = recognizer.create_stream();
@@ -153,8 +161,7 @@ impl Engine for SenseVoiceEngine {
         let (cleaned_text, detected_lang) = clean_sensevoice_text(&raw_text);
 
         // Calculate audio-based duration estimate
-        let audio_duration =
-            Duration::from_secs_f32(audio.len() as f32 / sample_rate as f32);
+        let audio_duration = Duration::from_secs_f32(audio.len() as f32 / sample_rate as f32);
 
         // Build a single segment for the full utterance.
         let segments = if cleaned_text.is_empty() {
@@ -269,6 +276,28 @@ fn resample_linear(audio: &[f32], src_rate: u32, dst_rate: u32) -> Vec<f32> {
     out
 }
 
+/// Normalize audio to a target peak amplitude for consistent ASR input.
+///
+/// Brings the loudest sample to a fixed target level (0.9 = −0.9 dBFS),
+/// scaling the rest proportionally.  Skips silent or already-clipped audio.
+#[cfg(feature = "engine-sensevoice")]
+fn normalize_loudness(audio: &[f32]) -> Vec<f32> {
+    if audio.is_empty() {
+        return audio.to_vec();
+    }
+    let peak = audio.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+    // Skip if silent or already clipping — would just amplify noise or distort
+    if !(1e-6..0.99).contains(&peak) {
+        return audio.to_vec();
+    }
+    let target: f32 = 0.9; // ≈ −0.9 dBFS
+    let gain = target / peak;
+    audio
+        .iter()
+        .map(|&s| (s as f64 * gain as f64).clamp(-1.0, 1.0) as f32)
+        .collect()
+}
+
 // ── Tests ──
 
 #[cfg(test)]
@@ -350,6 +379,53 @@ mod tests {
         };
         let result = engine.load_model(cfg);
         assert!(matches!(result, Err(EngineError::ModelLoadError(_))));
+    }
+
+    #[test]
+    fn test_normalize_loudness_empty() {
+        assert_eq!(normalize_loudness(&[]), Vec::<f32>::new());
+    }
+
+    #[test]
+    fn test_normalize_loudness_silence_unchanged() {
+        let silent = vec![0.0f32, 0.0, 0.0];
+        assert_eq!(normalize_loudness(&silent), silent);
+    }
+
+    #[test]
+    fn test_normalize_loudness_scales_peak_to_target() {
+        let quiet = vec![0.1f32, -0.05, 0.03];
+        let normed = normalize_loudness(&quiet);
+        let new_peak = normed.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+        // Should be close to 0.9
+        assert!((new_peak - 0.9).abs() < 0.01, "peak={new_peak}");
+        // signs preserved
+        assert!(normed[0] > 0.0);
+        assert!(normed[1] < 0.0);
+    }
+
+    #[test]
+    fn test_normalize_loudness_no_change_for_already_loud() {
+        let loud = vec![0.99f32, -0.98, 0.95, -0.99];
+        let normed = normalize_loudness(&loud);
+        // Already has sample >= 0.99, should not be re-scaled
+        assert_eq!(normed, loud);
+    }
+
+    #[test]
+    fn test_normalize_loudness_preserves_shape() {
+        // Use a monotonic signal that never crosses zero
+        let signal: Vec<f32> = (1..=100).map(|i| 0.1 + (i as f32 / 100.0) * 0.5).collect();
+        let normed = normalize_loudness(&signal);
+        // Ratio between adjacent samples should be preserved
+        for i in 1..signal.len() {
+            let orig_ratio = signal[i] / signal[i - 1];
+            let norm_ratio = normed[i] / normed[i - 1];
+            assert!(
+                (orig_ratio - norm_ratio).abs() < 0.001,
+                "shape not preserved at index {i}: {orig_ratio} vs {norm_ratio}"
+            );
+        }
     }
 
     #[test]

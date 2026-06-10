@@ -29,7 +29,7 @@
 
   <!-- Theme selection -->
   <div class="field-row">
-    <label class="field-label" id="theme-group-label">{t('settings.ui.theme')}</label>
+    <span class="field-label" id="theme-group-label">{t('settings.ui.theme')}</span>
     <div
       class="theme-buttons"
       role="group"
